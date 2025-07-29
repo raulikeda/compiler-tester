@@ -174,7 +174,7 @@ async def login_page(request: Request):
     """
     # GitHub App configuration (you'll need to replace these with your actual values)
     github_app_client_id = "1578480"  # Replace with your GitHub App client ID
-    redirect_uri = "http://localhost:8000/auth/callback"  # Replace with your callback URL
+    redirect_uri = "http://3.129.230.99/auth/callback"  # Replace with your callback URL
     
     # Scopes needed for your app
     scopes = "read:user,repo"
@@ -314,4 +314,4 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=80, reload=True)
