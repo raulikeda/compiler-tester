@@ -37,7 +37,7 @@ cursor.execute("""
 CREATE TABLE User (
     git_username TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
-    surname TEXT NOT NULL
+    email TEXT NOT NULL
 );
 """)
 
@@ -49,6 +49,7 @@ CREATE TABLE Repository (
     semester_name TEXT NOT NULL,
     compiled INTEGER check(compiled = 0 or compiled = 1),
     program_call TEXT NOT NULL,
+    installation_id INTEGER,
     PRIMARY KEY(git_username, repository_name),
     FOREIGN KEY(git_username) REFERENCES User(git_username),
     FOREIGN KEY(semester_name) REFERENCES Semester(name)

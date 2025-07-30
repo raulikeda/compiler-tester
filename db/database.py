@@ -1,7 +1,8 @@
 import sqlite3
 import os
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import date
+
 
 class DatabaseManager:
     def __init__(self, db_path: str = None):
@@ -18,6 +19,20 @@ class DatabaseManager:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row  # Enable column access by name
         return conn
+
+    def get_repository_info(self, git_username: str, repository_name: str) -> Optional[Dict[str, Any]]:
+        """Get repository information including installation_id"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT r.*, s.language, s.extension, s.secret 
+                FROM Repository r
+                JOIN Semester s ON r.semester_name = s.name
+                WHERE r.git_username = ? AND r.repository_name = ?
+            """, (git_username, repository_name))
+            
+            row = cursor.fetchone()
+            return dict(row) if row else None 
     
     def get_repository_status(self, git_username: str, repository_name: str) -> Optional[Dict[str, Any]]:
         """Get the current status of a repository across all versions"""
@@ -143,7 +158,7 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT r.*, u.name, u.surname 
+                SELECT r.*, u.name, u.email 
                 FROM Repository r
                 JOIN User u ON r.git_username = u.git_username
                 WHERE r.semester_name = ?
@@ -151,6 +166,54 @@ class DatabaseManager:
             """, (semester_name,))
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+    
+    def save_repository_with_installation(self, git_username: str, repository_name: str, installation_id: int) -> bool:
+        """Save repository with installation_id and empty/default values for other fields"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO Repository 
+                    (git_username, repository_name, semester_name, compiled, program_call, installation_id)
+                    VALUES (?, ?, '', 0, '', ?)
+                """, (git_username, repository_name, installation_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error saving repository with installation: {e}")
+            return False
+    
+    def update_repository_details(self, git_username: str, repository_name: str, 
+                                semester_name: str, program_call: str) -> bool:
+        """Update repository with complete details"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE Repository 
+                    SET semester_name = ?, program_call = ?, compiled = 1
+                    WHERE git_username = ? AND repository_name = ?
+                """, (semester_name, program_call, git_username, repository_name))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error updating repository details: {e}")
+            return False
+    
+    def save_or_update_user(self, git_username: str, name: str, email: str) -> bool:
+        """Save or update user with name and email"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO User (git_username, name, email)
+                    VALUES (?, ?, ?)
+                """, (git_username, name, email))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error saving user: {e}")
+            return False
 
 # Global database manager instance
 db_manager = DatabaseManager()
