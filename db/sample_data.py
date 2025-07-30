@@ -10,9 +10,10 @@ cursor = conn.cursor()
 # Insert sample semesters
 cursor.execute("""
 INSERT OR REPLACE INTO Semester (name, language, extension, secret) VALUES
-    ('2025-1', 'python', '.py', 'secret_2025_1'),
-    ('2025-2', 'java', '.java', 'secret_2025_2'),
-    ('2024-2', 'cpp', '.cpp', 'secret_2024_2')
+    ('BCC-2025-2', 'C', 'c', 'secret_2025_2'),
+    ('ENG-2025-2', 'C', 'c', 'secret_2025_2'),
+    ('BCC-2026-1', 'Java', 'java', 'secret_2026_1'),
+    ('BCC-2026-2', 'C++', 'cpp', 'secret_2026_2')
 """)
 
 # Insert sample users
@@ -34,9 +35,15 @@ INSERT OR REPLACE INTO Repository (git_username, repository_name, semester_name,
 # Insert sample versions
 cursor.execute("""
 INSERT OR REPLACE INTO Version (version_name, semester_name, direct_input, date_from, date_to) VALUES
-    ('v1.0', '2025-1', 1, '2025-01-15 00:00:00', '2025-02-15 23:59:59'),
-    ('v1.1', '2025-1', 0, '2025-02-16 00:00:00', '2025-03-15 23:59:59'),
-    ('v2.0', '2025-2', 1, '2025-03-01 00:00:00', '2025-04-01 23:59:59')
+    ('v0.0', 'BCC-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.0', 'BCC-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.1', 'BCC-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.2', 'BCC-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v2.0', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.1', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.2', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.3', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v3.0', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59')
 """)
 
 # Insert sample test results

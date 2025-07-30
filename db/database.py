@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from typing import List, Dict, Any, Optional
-from datetime import date
+from datetime import datetime
 
 
 class DatabaseManager:
@@ -16,7 +16,7 @@ class DatabaseManager:
     def get_connection(self):
         """Get a database connection with foreign keys enabled"""
         conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA foreign_keys = ON")
+        # conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row  # Enable column access by name
         return conn
 
@@ -40,7 +40,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT git_username, version_name, repository_name, semester_name, 
-                       language, extension, test_status, delivery_status
+                       test_status, delivery_status
                 FROM ReleaseStatus 
                 WHERE git_username = ? AND repository_name = ?
                 ORDER BY version_name ASC
@@ -106,20 +106,6 @@ class DatabaseManager:
             print(f"Error recording test result: {e}")
             return False
     
-    def get_repository_info(self, git_username: str, repository_name: str) -> Optional[Dict[str, Any]]:
-        """Get repository configuration information"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT r.*, s.language, s.extension, s.secret
-                FROM Repository r
-                JOIN Semester s ON r.semester_name = s.name
-                WHERE r.git_username = ? AND r.repository_name = ?
-            """, (git_username, repository_name))
-            
-            row = cursor.fetchone()
-            return dict(row) if row else None
-    
     def get_active_versions(self, semester_name: str = None) -> List[Dict[str, Any]]:
         """Get currently active versions (where date_from <= now <= date_to)"""
         with self.get_connection() as conn:
@@ -174,8 +160,8 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR REPLACE INTO Repository 
-                    (git_username, repository_name, semester_name, compiled, program_call, installation_id)
-                    VALUES (?, ?, '', 0, '', ?)
+                    (git_username, repository_name, semester_name, compiled, program_call, installation_id, language)
+                    VALUES (?, ?, '', 0, '', ?, '')
                 """, (git_username, repository_name, installation_id))
                 conn.commit()
                 return True
@@ -184,16 +170,16 @@ class DatabaseManager:
             return False
     
     def update_repository_details(self, git_username: str, repository_name: str, 
-                                semester_name: str, program_call: str) -> bool:
+                                semester_name: str, program_call: str, language: str, compiled: int) -> bool:
         """Update repository with complete details"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE Repository 
-                    SET semester_name = ?, program_call = ?, compiled = 1
+                    SET semester_name = ?, program_call = ?, compiled = ?, language = ?
                     WHERE git_username = ? AND repository_name = ?
-                """, (semester_name, program_call, git_username, repository_name))
+                """, (semester_name, program_call, compiled, language, git_username, repository_name))
                 conn.commit()
                 return True
         except Exception as e:
@@ -213,6 +199,151 @@ class DatabaseManager:
                 return True
         except Exception as e:
             print(f"Error saving user: {e}")
+            return False
+    
+    def remove_repositories_by_installation(self, installation_id: int) -> bool:
+        """Remove all repositories associated with an installation"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get repositories to be removed for logging
+                cursor.execute("""
+                    SELECT git_username, repository_name 
+                    FROM Repository 
+                    WHERE installation_id = ?
+                """, (installation_id,))
+                repos_to_remove = cursor.fetchall()
+                
+                # Delete test results first (foreign key constraint)
+                cursor.execute("""
+                    DELETE FROM TestResult 
+                    WHERE (git_username, repository_name) IN (
+                        SELECT git_username, repository_name 
+                        FROM Repository 
+                        WHERE installation_id = ?
+                    )
+                """, (installation_id,))
+                
+                # Delete repositories
+                cursor.execute("""
+                    DELETE FROM Repository 
+                    WHERE installation_id = ?
+                """, (installation_id,))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                print(f"Removed {deleted_count} repositories for installation {installation_id}")
+                for username, repo_name in repos_to_remove:
+                    print(f"  - {username}/{repo_name}")
+                
+                return True
+        except Exception as e:
+            print(f"Error removing repositories for installation {installation_id}: {e}")
+            return False
+    
+    def remove_orphaned_users(self) -> bool:
+        """Remove users who no longer have any repositories"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get users to be removed for logging
+                cursor.execute("""
+                    SELECT git_username 
+                    FROM User 
+                    WHERE git_username NOT IN (
+                        SELECT DISTINCT git_username FROM Repository
+                    )
+                """)
+                users_to_remove = cursor.fetchall()
+                
+                # Delete orphaned users
+                cursor.execute("""
+                    DELETE FROM User 
+                    WHERE git_username NOT IN (
+                        SELECT DISTINCT git_username FROM Repository
+                    )
+                """)
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                print(f"Removed {deleted_count} orphaned users")
+                for (username,) in users_to_remove:
+                    print(f"  - {username}")
+                
+                return True
+        except Exception as e:
+            print(f"Error removing orphaned users: {e}")
+            return False
+    
+    def get_installation_repositories(self, installation_id: int) -> List[Dict[str, str]]:
+        """Get all repositories associated with an installation"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT git_username, repository_name, semester_name, language
+                    FROM Repository 
+                    WHERE installation_id = ?
+                """, (installation_id,))
+                
+                rows = cursor.fetchall()
+                return [
+                    {
+                        'git_username': row[0],
+                        'repository_name': row[1],
+                        'semester_name': row[2],
+                        'language': row[3]
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            print(f"Error getting installation repositories: {e}")
+            return []
+    
+    def remove_test_results_for_repo(self, git_username: str, repository_name: str) -> bool:
+        """Remove all test results for a specific repository"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM TestResult 
+                    WHERE git_username = ? AND repository_name = ?
+                """, (git_username, repository_name))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                print(f"Removed {deleted_count} test results for {git_username}/{repository_name}")
+                return True
+        except Exception as e:
+            print(f"Error removing test results for {git_username}/{repository_name}: {e}")
+            return False
+    
+    def remove_repository(self, git_username: str, repository_name: str) -> bool:
+        """Remove a specific repository"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM Repository 
+                    WHERE git_username = ? AND repository_name = ?
+                """, (git_username, repository_name))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                if deleted_count > 0:
+                    print(f"Removed repository {git_username}/{repository_name}")
+                    return True
+                else:
+                    print(f"Repository {git_username}/{repository_name} not found")
+                    return False
+        except Exception as e:
+            print(f"Error removing repository {git_username}/{repository_name}: {e}")
             return False
 
 # Global database manager instance

@@ -3,7 +3,7 @@ from fastapi.responses import Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from db.database import db_manager
 import generate_badge as sr
 import time
@@ -14,11 +14,15 @@ from datetime import datetime, timedelta
 import subprocess
 import tempfile
 import os
+from dotenv import load_dotenv
 
-# GitHub App configuration (set these as environment variables in production)
-GITHUB_APP_ID = "1578480"  # Your GitHub App ID
-with open("id_rsa", "r") as f:
-    GITHUB_APP_PRIVATE_KEY = f.read()
+load_dotenv()
+
+# GitHub App configuration
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")  # Your GitHub App ID
+
+# Try to load private key from environment first, then from file
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -144,6 +148,108 @@ async def webhook(request: Request):
                     "status": "success",
                     "message": f"Tag push processed: {tag_name}",
                     "repository": repo_name
+                }
+        
+        elif event_type == "installation":
+            # Handle GitHub App installation/uninstallation events
+            action = payload.get("action")
+            installation = payload.get("installation", {})
+            installation_id = installation.get("id")
+            account = installation.get("account", {})
+            account_login = account.get("login", "unknown")
+            
+            logger.info(f"Installation event: {action} for installation {installation_id} (account: {account_login})")
+            
+            if action == "deleted" and True: # Temporarily disabled
+                # App was uninstalled - clean up database
+                try:
+                    # Get repositories that will be removed for logging
+                    repos_to_remove = db_manager.get_installation_repositories(installation_id)
+                    
+                    # Remove repositories associated with this installation
+                    repo_success = db_manager.remove_repositories_by_installation(installation_id)
+                    
+                    # Remove users who no longer have any repositories
+                    user_success = db_manager.remove_orphaned_users()
+                    
+                    if repo_success and user_success:
+                        logger.info(f"Successfully cleaned up data for uninstalled app (installation {installation_id})")
+                        removed_repos = [f"{repo['git_username']}/{repo['repository_name']}" for repo in repos_to_remove]
+                        
+                        return {
+                            "status": "success",
+                            "message": f"App uninstallation processed",
+                            "installation_id": installation_id,
+                            "account": account_login,
+                            "removed_repositories": removed_repos
+                        }
+                    else:
+                        logger.error(f"Failed to clean up data for uninstalled app (installation {installation_id})")
+                        return {
+                            "status": "error", 
+                            "message": "Failed to clean up database",
+                            "installation_id": installation_id
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error handling app uninstallation: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"Error processing uninstallation: {str(e)}",
+                        "installation_id": installation_id
+                    }
+            
+            elif action == "created":
+                # App was newly installed
+                repositories = payload.get("repositories", [])
+                repo_names = [repo.get("full_name", "") for repo in repositories]
+                
+                logger.info(f"App installed on {len(repositories)} repositories: {repo_names}")
+                
+                return {
+                    "status": "success",
+                    "message": "App installation detected",
+                    "installation_id": installation_id,
+                    "account": account_login,
+                    "repositories": repo_names,
+                    "next_step": "User should complete setup form"
+                }
+            
+            elif action in ["added", "removed"]:
+                # Repositories were added or removed from existing installation
+                repositories_added = payload.get("repositories_added", [])
+                repositories_removed = payload.get("repositories_removed", [])
+                
+                added_names = [repo.get("full_name", "") for repo in repositories_added]
+                removed_names = [repo.get("full_name", "") for repo in repositories_removed]
+                
+                # Handle removed repositories
+                if repositories_removed:
+                    try:
+                        for repo in repositories_removed:
+                            repo_full_name = repo.get("full_name", "")
+                            if "/" in repo_full_name:
+                                git_username, repository_name = repo_full_name.split("/", 1)
+                                
+                                # Remove test results first
+                                db_manager.remove_test_results_for_repo(git_username, repository_name)
+                                
+                                # Remove repository
+                                db_manager.remove_repository(git_username, repository_name)
+                        
+                        # Clean up orphaned users
+                        db_manager.remove_orphaned_users()
+                        
+                        logger.info(f"Removed repositories: {removed_names}")
+                    except Exception as e:
+                        logger.error(f"Error removing repositories: {e}")
+                
+                return {
+                    "status": "success",
+                    "message": f"Repository access updated",
+                    "installation_id": installation_id,
+                    "repositories_added": added_names,
+                    "repositories_removed": removed_names
                 }
         
         # For other event types, just acknowledge receipt
@@ -319,7 +425,192 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
         
         account_login = installation_data.get("account", {}).get("login", "unknown")
         repositories = installation_data.get("repositories", [])
-        
+        if len(repositories) != 1:
+            # Show a HTML page to user that only single repository installations are supported
+            # Remove the installation using the token
+            try:
+                jwt_token = generate_jwt_token()
+                async with httpx.AsyncClient() as client:
+                    delete_response = await client.delete(
+                        f"https://api.github.com/app/installations/{installation_id}",
+                        headers={
+                            "Authorization": f"Bearer {jwt_token}",
+                            "Accept": "application/vnd.github.v3+json",
+                            "X-GitHub-Api-Version": "2022-11-28"
+                        }
+                    )
+                    logger.info(f"Installation deletion response: {delete_response.status_code}")
+            except Exception as e:
+                logger.error(f"Failed to delete installation {installation_id}: {e}")
+            
+            # Return HTML page explaining the restriction
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Installation Error - Compiler Tester</title>
+                <style>
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+                        margin: 0;
+                        padding: 0;
+                        background-color: #f6f8fa;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        min-height: 100vh;
+                    }}
+                    .container {{
+                        background: white;
+                        padding: 40px;
+                        border-radius: 12px;
+                        box-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
+                        text-align: center;
+                        max-width: 500px;
+                        width: 100%;
+                    }}
+                    .error-icon {{
+                        width: 80px;
+                        height: 80px;
+                        background: #dc3545;
+                        border-radius: 50%;
+                        margin: 0 auto 20px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: white;
+                        font-size: 32px;
+                        font-weight: bold;
+                    }}
+                    h1 {{
+                        color: #dc3545;
+                        margin-bottom: 10px;
+                        font-size: 24px;
+                    }}
+                    p {{
+                        color: #586069;
+                        margin-bottom: 20px;
+                        line-height: 1.5;
+                    }}
+                    .warning-box {{
+                        background-color: #fff3cd;
+                        border: 1px solid #ffeaa7;
+                        border-radius: 8px;
+                        padding: 20px;
+                        margin: 20px 0;
+                        text-align: left;
+                    }}
+                    .warning-box h3 {{
+                        color: #856404;
+                        margin-top: 0;
+                        margin-bottom: 10px;
+                    }}
+                    .warning-box p {{
+                        color: #856404;
+                        margin-bottom: 0;
+                    }}
+                    .btn {{
+                        background-color: #2da44e;
+                        color: white;
+                        padding: 12px 24px;
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 16px;
+                        text-decoration: none;
+                        display: inline-block;
+                        margin: 10px;
+                        cursor: pointer;
+                        transition: background-color 0.2s;
+                    }}
+                    .btn:hover {{
+                        background-color: #2c974b;
+                    }}
+                    .btn-secondary {{
+                        background-color: #6c757d;
+                    }}
+                    .btn-secondary:hover {{
+                        background-color: #5a6268;
+                    }}
+                    .steps {{
+                        text-align: left;
+                        margin: 20px 0;
+                    }}
+                    .step {{
+                        margin: 10px 0;
+                        padding: 10px 0;
+                    }}
+                    .step-number {{
+                        background-color: #0366d6;
+                        color: white;
+                        border-radius: 50%;
+                        width: 24px;
+                        height: 24px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 14px;
+                        font-weight: bold;
+                        margin-right: 10px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="error-icon">⚠️</div>
+                    <h1>Installation Not Allowed</h1>
+                    <p>We detected that you tried to install the Compiler Tester app on <strong>{len(repositories)} repositories</strong>.</p>
+                    
+                    <div class="warning-box">
+                        <h3>⚠️ Single Repository Policy</h3>
+                        <p>For optimal performance and focused testing, Compiler Tester only supports installations on <strong>exactly one repository at a time</strong>.</p>
+                    </div>
+                    
+                    <div class="steps">
+                        <h3>How to Install Correctly:</h3>
+                        <div class="step">
+                            <span class="step-number">1</span>
+                            Click "Try Again" below to return to the login page
+                        </div>
+                        <div class="step">
+                            <span class="step-number">2</span>
+                            Choose <strong>"Only select repositories"</strong> (not "All repositories")
+                        </div>
+                        <div class="step">
+                            <span class="step-number">3</span>
+                            Select <strong>only ONE repository</strong> that you want to monitor
+                        </div>
+                        <div class="step">
+                            <span class="step-number">4</span>
+                            Complete the installation
+                        </div>
+                    </div>
+                    
+                    <p><strong>Why only one repository?</strong></p>
+                    <ul style="text-align: left; color: #586069;">
+                        <li>Better performance and faster compilation testing</li>
+                        <li>Focused monitoring for specific projects</li>
+                        <li>Easier management and debugging</li>
+                        <li>More efficient resource usage</li>
+                    </ul>
+                    
+                    <div style="margin-top: 30px;">
+                        <a href="/login" class="btn">🔄 Try Again</a>
+                        <a href="https://github.com/settings/installations" class="btn btn-secondary">⚙️ Manage Installations</a>
+                    </div>
+                    
+                    <p style="margin-top: 20px; color: #656d76; font-size: 14px;">
+                        The installation has been automatically removed. You can install the app again following the single repository guidelines.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            return HTMLResponse(content=html_content, status_code=400)
+
+
         # Save each repository with installation_id and empty values for other fields
         for repo in repositories:
             repo_full_name = repo.get("full_name", "")
@@ -462,6 +753,24 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
                 width: auto;
                 margin: 0;
             }}
+            .checkbox-label {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-weight: normal;
+                cursor: pointer;
+            }}
+            .checkbox-label input[type="checkbox"] {{
+                width: auto;
+                margin: 0;
+            }}
+            .global-options {{
+                background-color: #f0f8ff;
+                border: 1px solid #b8daff;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 30px;
+            }}
             .submit-btn {{
                 background-color: #2da44e;
                 color: white;
@@ -495,6 +804,18 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
             
             <form action="/setup/save" method="post">
                 <input type="hidden" name="installation_id" value="{installation_id}">
+                
+                <div class="global-options">
+                    <h3>Global Options</h3>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="add_badges" value="true" checked>
+                            Automatically add compilation status badges to README.md files
+                        </label>
+                        <small style="color: #656d76;">This will add a badge showing compilation status at the top of each repository's README.md</small>
+                    </div>
+                </div>
+                
                 {repo_forms}
                 
                 <button type="submit" class="submit-btn">Save All Repositories</button>
@@ -565,31 +886,72 @@ def generate_jwt_token() -> str:
     if not GITHUB_APP_PRIVATE_KEY or "Replace with" in GITHUB_APP_PRIVATE_KEY:
         raise Exception("GitHub App private key not configured")
     
-    payload = {
-        'iat': datetime.utcnow(),
-        'exp': datetime.utcnow() + timedelta(minutes=10),
-        'iss': GITHUB_APP_ID
-    }
-    
-    return jwt.encode(payload, GITHUB_APP_PRIVATE_KEY, algorithm='RS256')
+    try:
+        payload = {
+            'iat': datetime.utcnow(),
+            'exp': datetime.utcnow() + timedelta(minutes=10),
+            'iss': GITHUB_APP_ID
+        }
+        
+        # Log some debug info (without revealing the private key)
+        logger.info(f"Generating JWT for App ID: {GITHUB_APP_ID}")
+        logger.info(f"Private key starts with: {GITHUB_APP_PRIVATE_KEY[:30]}...")
+        
+        token = jwt.encode(payload, GITHUB_APP_PRIVATE_KEY, algorithm='RS256')
+        logger.info("JWT token generated successfully")
+        return token
+        
+    except Exception as e:
+        logger.error(f"Error generating JWT token: {e}")
+        raise Exception(f"Failed to generate JWT token: {e}")
 
 async def get_installation_token(installation_id: int, jwt_token: str) -> str:
     """Get installation access token"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {jwt_token}",
-                "Accept": "application/vnd.github.v3+json",
-                "X-GitHub-Api-Version": "2022-11-28"
-            }
-        )
+    try:
+        logger.info(f"Requesting access token for installation {installation_id}")
         
-        if response.status_code == 201:
-            data = response.json()
-            return data["token"]
-        else:
-            raise Exception(f"Failed to get installation token: {response.text}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+                headers={
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "X-GitHub-Api-Version": "2022-11-28"
+                }
+            )
+            
+            logger.info(f"GitHub API response status: {response.status_code}")
+            
+            if response.status_code == 201:
+                data = response.json()
+                logger.info("Successfully obtained installation access token")
+                return data["token"]
+            else:
+                logger.error(f"GitHub API error: {response.status_code}")
+                logger.error(f"Response body: {response.text}")
+                logger.error(f"Response headers: {dict(response.headers)}")
+                
+                # Common error interpretations
+                if response.status_code == 401:
+                    error_text = response.text
+                    if "Integration must generate a public key" in error_text:
+                        raise Exception("GitHub App needs a public key generated. Please check App settings in GitHub.")
+                    elif "Bad credentials" in error_text:
+                        raise Exception("Invalid JWT token or App ID. Please check private key format and App ID.")
+                    else:
+                        try:
+                            error_data = response.json()
+                            raise Exception(f"Authentication failed: {error_data.get('message', 'Unknown error')}")
+                        except:
+                            raise Exception(f"Authentication failed: {error_text}")
+                elif response.status_code == 404:
+                    raise Exception(f"Installation {installation_id} not found. App may not be installed.")
+                else:
+                    raise Exception(f"GitHub API error {response.status_code}: {response.text}")
+                    
+    except Exception as e:
+        logger.error(f"Error getting installation access token: {e}")
+        raise
 
 async def clone_repository(repo_full_name: str, installation_token: str, local_path: str = None) -> str:
     """Clone repository using installation token"""
@@ -763,6 +1125,133 @@ async def get_installation_id_for_repo(repo_full_name: str) -> Optional[int]:
         logger.error(f"Error finding installation for repo {repo_full_name}: {e}")
         return None
 
+async def add_badge_to_readme(git_username: str, repository_name: str, installation_token: str, base_url: str = None) -> bool:
+    """
+    Automatically add a compilation status badge to the repository's README.md
+    """
+    if not base_url:
+        base_url = "https://yourdomain.com"  # Replace with your actual domain
+    
+    badge_url = f"{base_url}/svg/{git_username}/{repository_name}"
+    badge_markdown = f"[![Compilation Status]({badge_url})]({badge_url})"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            # Get current README.md content
+            readme_response = await client.get(
+                f"https://api.github.com/repos/{git_username}/{repository_name}/readme",
+                headers={
+                    "Authorization": f"Bearer {installation_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "X-GitHub-Api-Version": "2022-11-28"
+                }
+            )
+            
+            if readme_response.status_code == 200:
+                readme_data = readme_response.json()
+                import base64
+                current_content = base64.b64decode(readme_data["content"]).decode('utf-8')
+                sha = readme_data["sha"]
+                
+                # Check if badge already exists
+                if badge_url in current_content:
+                    logger.info(f"Badge already exists in {git_username}/{repository_name}")
+                    return True
+                
+                # Add badge at the top of README
+                new_content = f"# {repository_name}\n\n{badge_markdown}\n\n" + current_content.lstrip()
+                
+                # If README starts with a title, add badge after it
+                lines = current_content.split('\n')
+                if lines and lines[0].startswith('#'):
+                    # Find the first non-title line
+                    insert_index = 1
+                    while insert_index < len(lines) and (lines[insert_index].startswith('#') or lines[insert_index].strip() == ''):
+                        insert_index += 1
+                    
+                    lines.insert(insert_index, f"\n{badge_markdown}\n")
+                    new_content = '\n'.join(lines)
+                
+            elif readme_response.status_code == 404:
+                # README doesn't exist, create one with the badge
+                new_content = f"# {repository_name}\n\n{badge_markdown}\n\nThis repository is monitored by Compiler Tester for automatic compilation status.\n"
+                sha = None
+            else:
+                logger.error(f"Failed to get README for {git_username}/{repository_name}: {readme_response.status_code}")
+                return False
+            
+            # Update README.md
+            update_data = {
+                "message": "Add compilation status badge",
+                "content": base64.b64encode(new_content.encode('utf-8')).decode('utf-8'),
+                "committer": {
+                    "name": "Compiler Tester Bot",
+                    "email": "compiler-tester@insper.edu.br"
+                }
+            }
+            
+            if sha:
+                update_data["sha"] = sha
+            
+            update_response = await client.put(
+                f"https://api.github.com/repos/{git_username}/{repository_name}/contents/README.md",
+                headers={
+                    "Authorization": f"Bearer {installation_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "X-GitHub-Api-Version": "2022-11-28"
+                },
+                json=update_data
+            )
+            
+            if update_response.status_code in [200, 201]:
+                logger.info(f"Successfully added badge to {git_username}/{repository_name}")
+                return True
+            else:
+                logger.error(f"Failed to update README for {git_username}/{repository_name}: {update_response.status_code} - {update_response.text}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"Error adding badge to {git_username}/{repository_name}: {e}")
+        return False
+
+async def add_badges_to_installation_repos(installation_id: int, repositories: List[Dict[str, Any]], base_url: str = None) -> Dict[str, bool]:
+    """
+    Add badges to all repositories in an installation
+    """
+    results = {}
+    
+    try:
+        # Generate tokens
+        jwt_token = generate_jwt_token()
+        installation_token = await get_installation_token(installation_id, jwt_token)
+        
+        for repo in repositories:
+            repo_full_name = repo.get("full_name", "")
+            if "/" in repo_full_name:
+                git_username, repository_name = repo_full_name.split("/", 1)
+                
+                # Check if repository has Contents write permission
+                repo_permissions = repo.get("permissions", {})
+                logger.info(f"Checking permissions for {repo_full_name}: {repo_permissions}")
+                has_contents_permission = (
+                    repo_permissions.get("contents", False) or 
+                    repo_permissions.get("push", False) or  # Alternative permission name
+                    repo_permissions.get("admin", False)    # Admin includes all permissions
+                )
+                
+                if False and not has_contents_permission:
+                    logger.warning(f"No contents/push permission for {repo_full_name} (permissions: {repo_permissions}), skipping badge addition")
+                    results[repo_full_name] = False
+                    continue
+                
+                success = await add_badge_to_readme(git_username, repository_name, installation_token, base_url)
+                results[repo_full_name] = success
+                
+    except Exception as e:
+        logger.error(f"Error adding badges to installation {installation_id}: {e}")
+    
+    return results
+
 @app.post("/setup/save")
 async def save_setup(request: Request):
     """
@@ -781,8 +1270,17 @@ async def save_setup(request: Request):
     logger.info(f"Saving setup for installation {installation_id}")
     
     try:
-        # Get current semester (you may want to make this configurable)
-        current_semester = "2025-1"  # This should be dynamic based on your needs
+        # Get current semester from datetime
+        def get_current_semester():
+            month = datetime.now().month
+            if month in [1, 2, 3, 4, 5, 6]:
+                return "1"
+            elif month in [7, 8, 9, 10, 11, 12]:
+                return "2"
+            else:
+                return "unknown"
+                
+        current_semester = datetime.now().strftime("%Y") + '-' + get_current_semester()
         
         success_repos = []
         failed_repos = []
@@ -812,27 +1310,61 @@ async def save_setup(request: Request):
                 continue
             
             # Generate program_call based on language
+            compiled = 0
             program_call_map = {
-                "Python": "python3",
-                "JavaScript": "node", 
-                "TypeScript": "node",
-                "C++": "g++",
-                "C#": "dotnet"
+                "Python": "python3 main.py",
+                "JavaScript": "node main.js", 
+                "TypeScript": "node main.js",
+                "C++": "g++ main.cpp -o main && ./main",
+                "C#": "dotnet run main.csproj"
             }
             program_call = program_call_map.get(language, "")
+            if language in ["Java", "C++", "C#"]:
+                compiled = 1
             
             # Save/update user
             user_success = db_manager.save_or_update_user(git_username, name, email)
             
             # Update repository with complete details
             repo_success = db_manager.update_repository_details(
-                git_username, repository_name, semester_name, program_call
+                git_username, repository_name, semester_name, program_call, language, compiled
             )
             
             if user_success and repo_success:
                 success_repos.append(f"{git_username}/{repository_name}")
             else:
                 failed_repos.append(f"{git_username}/{repository_name} - Database error")
+        
+        # Handle badge addition if requested
+        add_badges = form_data.get("add_badges") == "true"
+        badge_results = {}
+        
+        if add_badges and success_repos:
+            logger.info("Adding badges to repositories...")
+            
+            try:
+                # Get installation details to get repository list with permissions
+                installation_data = await get_installation_details(installation_id)
+                repositories = installation_data.get("repositories", [])
+                
+                # Filter to only successful repositories
+                successful_repo_names = set(success_repos)
+                repos_to_badge = [
+                    repo for repo in repositories 
+                    if repo.get("full_name") in successful_repo_names
+                ]
+                
+                # Add badges
+                base_url = os.getenv("BASE_URL")  # Replace with your actual domain
+                badge_results = await add_badges_to_installation_repos(installation_id, repos_to_badge, base_url)
+                
+                # Update success/failed lists based on badge results
+                for repo_name, badge_success in badge_results.items():
+                    if not badge_success:
+                        logger.warning(f"Failed to add badge to {repo_name}")
+                        
+            except Exception as e:
+                logger.error(f"Error adding badges: {e}")
         
         # Generate success page
         if success_repos:
@@ -844,6 +1376,20 @@ async def save_setup(request: Request):
             failure_list = "<br>".join([f"❌ {repo}" for repo in failed_repos])
         else:
             failure_list = ""
+        
+        # Generate badge status message
+        badge_message = ""
+        if add_badges:
+            successful_badges = sum(1 for success in badge_results.values() if success)
+            total_badges = len(badge_results)
+            
+            if total_badges > 0:
+                badge_message = f"<br><br><strong>Badge Addition:</strong> {successful_badges}/{total_badges} badges added successfully"
+                if successful_badges < total_badges:
+                    failed_badge_repos = [repo for repo, success in badge_results.items() if not success]
+                    badge_message += f"<br>Failed to add badges to: {', '.join(failed_badge_repos)}"
+            else:
+                badge_message = "<br><br><strong>Badge Addition:</strong> No badges were processed"
         
         success_html = f"""
         <!DOCTYPE html>
@@ -909,6 +1455,7 @@ async def save_setup(request: Request):
                     <strong>Successfully Configured:</strong><br>
                     {success_list}
                     {f'<br><br><strong>Failed:</strong><br>{failure_list}' if failure_list else ''}
+                    {badge_message}
                 </div>
                 
                 <p><strong>Repository Links:</strong></p>

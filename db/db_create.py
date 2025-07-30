@@ -20,7 +20,7 @@ cursor.execute("""DROP TABLE IF EXISTS Semester;""")
 cursor.execute("""DROP VIEW IF EXISTS ReleaseStatus;""")
 cursor.execute("""DROP VIEW IF EXISTS TestResultStatus;""")
 
-cursor.execute("PRAGMA foreign_keys = 1")
+# cursor.execute("PRAGMA foreign_keys = 1")
 
 # Create Semester table (new)
 cursor.execute("""
@@ -50,6 +50,7 @@ CREATE TABLE Repository (
     compiled INTEGER check(compiled = 0 or compiled = 1),
     program_call TEXT NOT NULL,
     installation_id INTEGER,
+    language TEXT NOT NULL,
     PRIMARY KEY(git_username, repository_name),
     FOREIGN KEY(git_username) REFERENCES User(git_username),
     FOREIGN KEY(semester_name) REFERENCES Semester(name)
@@ -110,8 +111,6 @@ CREATE VIEW ReleaseStatus AS
               ver.version_name,
               rep.repository_name,
               rep.semester_name,
-              sem.language,
-              sem.extension,
               CASE trs.test_status is null
                   WHEN 1
                      THEN 'NOT_FOUND'
@@ -137,7 +136,6 @@ CREATE VIEW ReleaseStatus AS
               END delivery_status
          FROM Repository AS rep
          JOIN Version AS ver ON rep.semester_name = ver.semester_name
-         JOIN Semester AS sem ON rep.semester_name = sem.name
     LEFT JOIN TestResultStatus AS trs ON trs.version_name = ver.version_name
                                        AND trs.git_username = rep.git_username
                                        AND trs.repository_name = rep.repository_name

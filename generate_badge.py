@@ -21,7 +21,7 @@ class RepoReport:
 
         db_manager = DatabaseManager()
         reg = db_manager.get_repository_status(self.git_username, self.repository_name)
-
+        
         for release in reg:
             version = release['version_name']
             test_status = release['test_status']
