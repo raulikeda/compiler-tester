@@ -13,6 +13,7 @@ class RepoReport:
 
         self.git_username = git_username
         self.repository_name = repository_name
+        self.error = False
 
         self.db_update()
 
@@ -22,6 +23,10 @@ class RepoReport:
         db_manager = DatabaseManager()
         reg = db_manager.get_repository_status(self.git_username, self.repository_name)
         
+        if not reg:
+            self.error = True
+            return
+
         for release in reg:
             version = release['version_name']
             test_status = release['test_status']
@@ -41,6 +46,13 @@ class RepoReport:
     def compile(self):
         tagcode = ''
         xpos = 0
+
+        if self.error:
+            self.code = '<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">\n'.format(300, self.height) + \
+                        '<rect x="0" y="0" width="300" height="20" fill="#ff4d4d"/>\n' + \
+                        '<text x="150" y="15" fill="#fff" text-anchor="middle" font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="11">Error! Reinstall Compiler Tester App</text>\n' + \
+                        '</svg>'
+            return self.code
 
         for tag in self.taglist:
             tagcode += tag.compile(xpos)

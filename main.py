@@ -1,9 +1,10 @@
-from fastapi import FastAPI, Request, HTTPException, Form
+from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header
 from fastapi.responses import Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Annotated
 from db.database import db_manager
 import generate_badge as sr
 import time
@@ -15,6 +16,7 @@ import subprocess
 import tempfile
 import os
 from dotenv import load_dotenv
+import base64
 
 load_dotenv()
 
@@ -23,6 +25,9 @@ GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")  # Your GitHub App ID
 
 # Try to load private key from environment first, then from file
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
+
+# API Secret for secure endpoints
+API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +41,30 @@ app = FastAPI(
 
 # Templates for rendering HTML pages
 templates = Jinja2Templates(directory="templates")
+
+# Pydantic models for API endpoints
+class TestResultData(BaseModel):
+    version_name: str = Field(..., description="Version name for the test")
+    release_name: str = Field(..., description="Release/tag name")
+    git_username: str = Field(..., description="GitHub username")
+    repository_name: str = Field(..., description="Repository name")
+    test_status: str = Field(..., pattern="^(PASS|ERROR|FAILED)$", description="Test status: PASS, ERROR, or FAILED")
+    issue_text: Optional[str] = Field(None, description="Optional issue description for failed tests")
+
+class TestResultResponse(BaseModel):
+    success: bool
+    message: str
+    issue_url: Optional[str] = Field(None, description="GitHub issue URL if created")
+    
+# Security dependency
+async def verify_api_secret(x_api_secret: Annotated[str, Header()]) -> str:
+    """Verify API secret from header"""
+    if x_api_secret != API_SECRET:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API secret"
+        )
+    return x_api_secret
 
 @app.get("/")
 async def root():
@@ -264,6 +293,87 @@ async def webhook(request: Request):
     except Exception as e:
         logger.error(f"Error processing webhook: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/test-result", response_model=TestResultResponse)
+async def save_test_result(
+    test_data: TestResultData,
+    api_secret: str = Depends(verify_api_secret)
+) -> TestResultResponse:
+    """
+    Save a test result to the database.
+    Requires a valid API secret in the X-API-Secret header.
+    """
+    try:
+        logger.info(f"Received test result for {test_data.git_username}/{test_data.repository_name}")
+        
+        # Verify that the repository exists
+        repo_info = db_manager.get_repository_info(test_data.git_username, test_data.repository_name)
+        if not repo_info:
+            logger.warning(f"Repository {test_data.git_username}/{test_data.repository_name} not found")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Repository {test_data.git_username}/{test_data.repository_name} not found"
+            )
+        
+        # Record the test result
+        success = db_manager.record_test_result(
+            version_name=test_data.version_name,
+            release_name=test_data.release_name,
+            git_username=test_data.git_username,
+            repository_name=test_data.repository_name,
+            test_status=test_data.test_status,
+            issue_text=test_data.issue_text,
+            semester_name=repo_info['semester_name']
+        )
+        
+        if success:
+            logger.info(f"Successfully recorded test result: {test_data.version_name}/{test_data.release_name} - {test_data.test_status}")
+            
+            # Create GitHub issue if test failed and there's issue text
+            issue_url = None
+            if test_data.test_status in ['ERROR', 'FAILED'] and test_data.issue_text and repo_info.get('installation_id'):
+                issue_title = f"Errors in release {test_data.release_name}"
+                try:
+                    issue_url = await create_github_issue(
+                        git_username=test_data.git_username,
+                        repository_name=test_data.repository_name,
+                        installation_id=repo_info['installation_id'],
+                        title=issue_title,
+                        body=test_data.issue_text
+                    )
+                    if issue_url:
+                        logger.info(f"Created GitHub issue: {issue_url}")
+                    else:
+                        logger.warning(f"Failed to create GitHub issue for {test_data.git_username}/{test_data.repository_name}")
+                except Exception as issue_error:
+                    logger.error(f"Error creating GitHub issue: {str(issue_error)}")
+                    # Don't fail the whole request if issue creation fails
+            
+            response_message = "Test result saved successfully"
+            if issue_url:
+                response_message += f". GitHub issue created: {issue_url}"
+            
+            return TestResultResponse(
+                success=True,
+                message=response_message,
+                issue_url=issue_url
+            )
+        else:
+            logger.error(f"Failed to record test result for {test_data.git_username}/{test_data.repository_name}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save test result to database"
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error saving test result: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
     
 @app.get('/svg/{user}/{repo}')
 async def svg(user, repo):
@@ -953,6 +1063,53 @@ async def get_installation_token(installation_id: int, jwt_token: str) -> str:
         logger.error(f"Error getting installation access token: {e}")
         raise
 
+async def create_github_issue(
+    git_username: str, 
+    repository_name: str, 
+    installation_id: int, 
+    title: str, 
+    body: str
+) -> Optional[str]:
+    """
+    Create a GitHub issue in the specified repository
+    Returns the issue URL if successful, None if failed
+    """
+    try:
+        # Generate JWT token
+        jwt_token = generate_jwt_token()
+        
+        # Get installation access token
+        access_token = await get_installation_token(installation_id, jwt_token)
+        
+        # Create the issue
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.github.com/repos/{git_username}/{repository_name}/issues",
+                headers={
+                    "Authorization": f"token {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "X-GitHub-Api-Version": "2022-11-28"
+                },
+                json={
+                    "title": title,
+                    "body": body
+                }
+            )
+            
+            if response.status_code == 201:
+                issue_data = response.json()
+                issue_url = issue_data.get("html_url")
+                logger.info(f"Successfully created GitHub issue: {issue_url}")
+                return issue_url
+            else:
+                logger.error(f"Failed to create GitHub issue: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error creating GitHub issue: {str(e)}")
+        return None
+
 async def clone_repository(repo_full_name: str, installation_token: str, local_path: str = None) -> str:
     """Clone repository using installation token"""
     if local_path is None:
@@ -1146,10 +1303,9 @@ async def add_badge_to_readme(git_username: str, repository_name: str, installat
                     "X-GitHub-Api-Version": "2022-11-28"
                 }
             )
-            
+                        
             if readme_response.status_code == 200:
-                readme_data = readme_response.json()
-                import base64
+                readme_data = readme_response.json()                
                 current_content = base64.b64decode(readme_data["content"]).decode('utf-8')
                 sha = readme_data["sha"]
                 
