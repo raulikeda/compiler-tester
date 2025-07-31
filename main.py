@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header
 from fastapi.responses import Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import json
 import logging
 from typing import Dict, Any, List, Optional, Annotated
@@ -11,6 +11,7 @@ import time
 import hashlib
 import httpx
 import jwt
+import asyncio
 from datetime import datetime, timedelta
 import subprocess
 import tempfile
@@ -28,6 +29,9 @@ GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
 
 # API Secret for secure endpoints
 API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
+
+# Callback URL for Docker container
+CALLBACK_URL = os.getenv("CALLBACK_URL", "http://3.129.230.99/api/test-result")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,8 +52,15 @@ class TestResultData(BaseModel):
     release_name: str = Field(..., description="Release/tag name")
     git_username: str = Field(..., description="GitHub username")
     repository_name: str = Field(..., description="Repository name")
-    test_status: str = Field(..., pattern="^(PASS|ERROR|FAILED)$", description="Test status: PASS, ERROR, or FAILED")
+    test_status: str = Field(..., description="Test status: PASS, ERROR, or FAILED")
     issue_text: Optional[str] = Field(None, description="Optional issue description for failed tests")
+    
+    @field_validator('test_status')
+    @classmethod
+    def validate_test_status(cls, v):
+        if v not in ['PASS', 'ERROR', 'FAILED']:
+            raise ValueError('test_status must be one of: PASS, ERROR, FAILED')
+        return v
 
 class TestResultResponse(BaseModel):
     success: bool
@@ -102,30 +113,37 @@ async def webhook(request: Request):
                 # Get repository info from database
                 repo_info = db_manager.get_repository_info(git_username, repository_name)
                 if repo_info:
-                    # Get active versions for this semester
-                    active_versions = db_manager.get_active_versions(repo_info['semester_name'])
+                    # Get semester info for language and file extension
+                    semester_info = db_manager.get_semester_info(repo_info['semester_name'])
                     
-                    # Record test results for each active version
-                    for version in active_versions:
-                        # Run actual compilation tests
-                        test_status = await run_actual_compilation_test(
-                            git_username, repository_name, tag_name, version
-                        )
-                        
-                        success = db_manager.record_test_result(
-                            version['version_name'], 
-                            tag_name, 
-                            git_username, 
-                            repository_name, 
-                            test_status
-                        )
-                        
-                        if success:
-                            logger.info(f"Recorded test result for {repo_name}, version {version['version_name']}: {test_status}")
+                    if semester_info and repo_info.get('installation_id'):
+                        try:
+                            # Generate access token
+                            jwt_token = generate_jwt_token()
+                            access_token = await get_installation_token(repo_info['installation_id'], jwt_token)
+                            
+                            # Run Docker container asynchronously
+                            await run_docker_container_async(
+                                git_username=git_username,
+                                repository_name=repository_name,
+                                language=semester_info['language'],
+                                version=tag_name[:4] if len(tag_name) >= 4 else tag_name,
+                                file_extension=semester_info['extension'],
+                                command_template=repo_info['program_call'],
+                                access_token=access_token,
+                                release=tag_name
+                            )
+                            
+                            logger.info(f"Started Docker container for {repo_name}:{tag_name}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error starting Docker container for {repo_name}:{tag_name} - {e}")
+                    else:
+                        logger.warning(f"Missing semester info or installation_id for repository {repo_name}")
                 else:
                     logger.warning(f"Repository {repo_name} not found in database")
             
-            logger.info(f"New tag created: {tag_name} in repository: {repo_name}")
+            logger.info(f"Tag creation event processed: {tag_name} in repository: {repo_name}")
             
             return {
                 "status": "success",
@@ -134,7 +152,7 @@ async def webhook(request: Request):
             }
         
         elif event_type == "push":
-            # Handle push events if needed
+            # Handle push events for tags
             ref = payload.get("ref", "")
             if ref.startswith("refs/tags/"):
                 tag_name = ref.replace("refs/tags/", "")
@@ -148,30 +166,37 @@ async def webhook(request: Request):
                     # Get repository info from database
                     repo_info = db_manager.get_repository_info(git_username, repository_name)
                     if repo_info:
-                        # Get active versions for this semester
-                        active_versions = db_manager.get_active_versions(repo_info['semester_name'])
+                        # Get semester info for language and file extension
+                        semester_info = db_manager.get_semester_info(repo_info['semester_name'])
                         
-                        # Record test results for each active version
-                        for version in active_versions:
-                            # Run actual compilation tests
-                            test_status = await run_actual_compilation_test(
-                                git_username, repository_name, tag_name, version
-                            )
-                            
-                            success = db_manager.record_test_result(
-                                version['version_name'], 
-                                tag_name, 
-                                git_username, 
-                                repository_name, 
-                                test_status
-                            )
-                            
-                            if success:
-                                logger.info(f"Recorded test result for {repo_name}, version {version['version_name']}: {test_status}")
+                        if semester_info and repo_info.get('installation_id'):
+                            try:
+                                # Generate access token
+                                jwt_token = generate_jwt_token()
+                                access_token = await get_installation_token(repo_info['installation_id'], jwt_token)
+                                
+                                # Run Docker container asynchronously
+                                await run_docker_container_async(
+                                    git_username=git_username,
+                                    repository_name=repository_name,
+                                    language=semester_info['language'],
+                                    version=tag_name[:4] if len(tag_name) >= 4 else tag_name,
+                                    file_extension=semester_info['extension'],
+                                    command_template=repo_info['program_call'],
+                                    access_token=access_token,
+                                    release=tag_name
+                                )
+                                
+                                logger.info(f"Started Docker container for {repo_name}:{tag_name}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error starting Docker container for {repo_name}:{tag_name} - {e}")
+                        else:
+                            logger.warning(f"Missing semester info or installation_id for repository {repo_name}")
                     else:
                         logger.warning(f"Repository {repo_name} not found in database")
                 
-                logger.info(f"Tag push detected: {tag_name} in repository: {repo_name}")
+                logger.info(f"Tag push event processed: {tag_name} in repository: {repo_name}")
                 
                 return {
                     "status": "success",
@@ -1062,6 +1087,77 @@ async def get_installation_token(installation_id: int, jwt_token: str) -> str:
     except Exception as e:
         logger.error(f"Error getting installation access token: {e}")
         raise
+
+async def run_docker_container_async(
+    git_username: str,
+    repository_name: str,
+    language: str,
+    version: str,
+    file_extension: str,
+    command_template: str,
+    access_token: str,
+    release: str
+) -> None:
+    """
+    Run Docker container asynchronously for compilation testing
+    """
+    try:
+        # Extract version from release (first 4 characters)
+        version_short = release[:4] if len(release) >= 4 else release
+        
+        # Build Docker command
+        docker_cmd = [
+            "docker", "run", "--rm", "-it",
+            "compiler-testing-lib-python",
+            "--git_username", git_username,
+            "--git_repository", repository_name,
+            "--language", language,
+            "--version", version_short,
+            "--file_extension", file_extension,
+            "--max_errors", "3",
+            "--timeout", "10",
+            "--command_template", command_template,
+            "--token", access_token,
+            "--release", release,
+            "--callback_url", CALLBACK_URL,
+            "--api_secret", API_SECRET
+        ]
+        
+        logger.info(f"Starting Docker container for {git_username}/{repository_name}:{release}")
+        logger.info(f"Docker command: {' '.join(docker_cmd[:4])} ... (args hidden for security)")
+        
+        # Run Docker container asynchronously
+        process = await asyncio.create_subprocess_exec(
+            *docker_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Don't wait for completion - let it run in background
+        logger.info(f"Docker container started with PID: {process.pid}")
+        
+        # Optionally log the process completion in background
+        asyncio.create_task(_monitor_docker_process(process, git_username, repository_name, release))
+        
+    except Exception as e:
+        logger.error(f"Error starting Docker container for {git_username}/{repository_name}:{release} - {e}")
+
+async def _monitor_docker_process(process, git_username: str, repository_name: str, release: str):
+    """Monitor Docker process completion and log results"""
+    try:
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            logger.info(f"Docker container completed successfully for {git_username}/{repository_name}:{release}")
+            if stdout:
+                logger.debug(f"Docker stdout: {stdout.decode()}")
+        else:
+            logger.warning(f"Docker container failed for {git_username}/{repository_name}:{release} with code {process.returncode}")
+            if stderr:
+                logger.error(f"Docker stderr: {stderr.decode()}")
+                
+    except Exception as e:
+        logger.error(f"Error monitoring Docker process for {git_username}/{repository_name}:{release} - {e}")
 
 async def create_github_issue(
     git_username: str, 
