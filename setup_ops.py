@@ -239,7 +239,7 @@ def generate_setup_success_page(
             
             <p><strong>Repository Links:</strong></p>
             <div>
-                {''.join([f'<a href="/svg/{repo.split("/")[0]}/{repo.split("/")[1]}" class="repo-link">{repo} Badge</a>' for repo in success_repos])}
+                {''.join([f'<a href="https://github.com/{repo.split("/")[0]}/{repo.split("/")[1]}" class="repo-link">{repo}</a>' for repo in success_repos])}
             </div>
             
             <p><strong>Next Steps:</strong></p>

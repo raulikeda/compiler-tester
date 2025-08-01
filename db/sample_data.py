@@ -11,25 +11,20 @@ cursor = conn.cursor()
 cursor.execute("""
 INSERT OR REPLACE INTO Semester (name, language, extension, secret) VALUES
     ('BCC-2025-2', 'C', 'c', 'secret_2025_2'),
-    ('ENG-2025-2', 'C', 'c', 'secret_2025_2'),
-    ('BCC-2026-1', 'Java', 'java', 'secret_2026_1'),
-    ('BCC-2026-2', 'C++', 'cpp', 'secret_2026_2')
+    ('ENG-2025-2', 'C', 'c', 'secret_2025_2')
 """)
 
 # Insert sample users
 cursor.execute("""
-INSERT OR REPLACE INTO User (git_username, name, surname) VALUES
-    ('raulikeda', 'Raul', 'Ikeda'),
-    ('student1', 'John', 'Doe'),
-    ('student2', 'Jane', 'Smith')
+INSERT OR REPLACE INTO User (git_username, name, email) VALUES
+    ('raulikeda', 'Raul', 'a@a.com')
 """)
 
 # Insert sample repositories
 cursor.execute("""
-INSERT OR REPLACE INTO Repository (git_username, repository_name, semester_name, compiled, program_call) VALUES
-    ('raulikeda', 'compiler-tester', '2025-1', 0, 'python main.py'),
-    ('student1', 'assignment1', '2025-1', 1, 'python compile.py'),
-    ('student2', 'project-alpha', '2025-2', 1, 'javac Main.java && java Main')
+INSERT OR REPLACE INTO Repository (git_username, repository_name, semester_name, compiled, program_call, instalation_id, language) VALUES
+    ('raulikeda', 'compiler-tester-eng', 'ENG-2025-2', 0, 'python main.py', 1, 'Python'),
+    ('raulikeda', 'compiler-tester-bcc', 'BCC-2025-2', 0, 'python main.py', 2, 'Python'),
 """)
 
 # Insert sample versions
@@ -43,15 +38,23 @@ INSERT OR REPLACE INTO Version (version_name, semester_name, direct_input, date_
     ('v2.1', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
     ('v2.2', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
     ('v2.3', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
-    ('v3.0', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59')
+    ('v3.0', 'BCC-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v0.0', 'ENG-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.0', 'ENG-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.1', 'ENG-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v1.2', 'ENG-2025-2', 0, '2025-07-15 00:00:00', '2025-12-15 23:59:59'),
+    ('v2.0', 'ENG-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.1', 'ENG-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.2', 'ENG-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v2.3', 'ENG-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59'),
+    ('v3.0', 'ENG-2025-2', 1, '2025-07-15 00:00:00', '2025-12-01 23:59:59')
 """)
 
 # Insert sample test results
 cursor.execute("""
 INSERT OR REPLACE INTO TestResult (version_name, release_name, git_username, repository_name, date_run, test_status, issue_text) VALUES
-    ('v1.0', 'release-1.0', 'raulikeda', 'compiler-tester', '2025-01-20 10:30:00', 'PASS', NULL),
-    ('v1.0', 'release-1.0', 'student1', 'assignment1', '2025-01-25 14:15:00', 'FAILED', 'Compilation error: missing import'),
-    ('v1.1', 'release-1.1', 'student2', 'project-alpha', '2025-02-20 16:45:00', 'PASS', NULL)
+    ('v0.0', 'v0.0.0', 'raulikeda', 'compiler-tester-eng', '2025-01-20 10:30:00', 'PASS', NULL),
+    ('v0.0', 'v0.0.0', 'raulikeda', 'compiler-tester-bcc', '2025-01-20 10:30:00', 'PASS', NULL),
 """)
 
 conn.commit()
