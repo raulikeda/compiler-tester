@@ -13,7 +13,7 @@ load_dotenv()
 API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 
 # Test with a simple request
-url = "http://3.129.230.99/api/test-result"  # Using your actual IP
+url = "https://compiler-tester.insper-comp.com.br/api/test-result"  # Using your actual IP
 headers = {
     "X-API-Secret": API_SECRET,  # Actual secret from .env
     "Content-Type": "application/json"

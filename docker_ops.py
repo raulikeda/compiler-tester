@@ -10,7 +10,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Callback URL for Docker container
-CALLBACK_URL = os.getenv("CALLBACK_URL", "http://3.129.230.99/api/test-result")
+CALLBACK_URL = os.getenv("CALLBACK_URL", "https://compiler-tester.insper-comp.com.br/api/test-result")
 API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 
 
