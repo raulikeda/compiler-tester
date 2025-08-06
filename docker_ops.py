@@ -40,7 +40,7 @@ async def run_docker_container_async(
             "--language", language,
             "--version", version_short,
             "--file_extension", file_extension,
-            "--max_errors", "3",
+            "--max_errors", "5",
             "--timeout", "10",
             "--command_template", command_template,
             "--token", access_token,
