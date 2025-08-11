@@ -17,6 +17,7 @@ API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 async def run_docker_container_async(
     git_username: str,
     repository_name: str,
+    repo_language: str,
     language: str,
     version: str,
     file_extension: str,
@@ -34,14 +35,14 @@ async def run_docker_container_async(
         # Build Docker command
         docker_cmd = [
             "docker", "run", "--rm", "-it",
-            "compiler-testing-lib-python",
+            f"compiler-testing-lib-{repo_language.lower().replace("#","s").replace("++","pp")}",
             "--git_username", git_username,
             "--git_repository", repository_name,
             "--language", language,
             "--version", version_short,
             "--file_extension", file_extension,
             "--max_errors", "5",
-            "--timeout", "10",
+            "--timeout", "30",
             "--command_template", command_template,
             "--token", access_token,
             "--release", release,

@@ -36,6 +36,7 @@ async def process_tag_event(git_username: str, repository_name: str, tag_name: s
         await run_docker_container_async(
             git_username=git_username,
             repository_name=repository_name,
+            repo_language=repo_info['language'],
             language=semester_info['language'],
             version=tag_name[:4] if len(tag_name) >= 4 else tag_name,
             file_extension=semester_info['extension'],
