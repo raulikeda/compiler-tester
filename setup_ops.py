@@ -81,7 +81,11 @@ async def process_setup_save(request: Request):
                 "OCaml": "ocaml main.ml",
                 "Kotlin": "kotlinc -script main.kts",
                 "C++": "g++ main.cpp -o main && ./main",
-                "C#": "dotnet run main.csproj"
+                "C#": "dotnet run main.csproj",
+                "PHP": "php main.php",
+                "Rust": "cargo run --release",
+                "Swift": "swift main.swift",
+                "Zig": "zig run main.zig"
             }
             program_call = program_call_map.get(language, "")
             if language in ["Java", "C++", "C#"]:
