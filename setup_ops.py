@@ -85,7 +85,7 @@ async def process_setup_save(request: Request):
                 "PHP": "php main.php",
                 "Rust": "cargo run --release",
                 "Swift": "swift main.swift",
-                "Zig": "zig run main.zig"
+                "Zig": "zig run main.zig --"
             }
             program_call = program_call_map.get(language, "")
             if language in ["Java", "C++", "C#"]:
