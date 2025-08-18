@@ -35,6 +35,9 @@ async def run_docker_container_async(
         # Build Docker command
         docker_cmd = [
             "docker", "run", "--rm", "-it",
+            "-e", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+            "-e", "DOTNET_NOLOGO=1",
+            "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
             f"compiler-testing-lib-{repo_language.lower().replace("#","s").replace("++","pp")}",
             "--git_username", git_username,
             "--git_repository", repository_name,
