@@ -123,7 +123,7 @@ CREATE VIEW ReleaseStatus AS
                                 THEN 'DELAYED'
                              ELSE 'ON_TIME'
                           END
-                  ELSE (SELECT CASE min(date_run) > ver.date_to
+                  ELSE (SELECT CASE datetime(min(date_run), '-3 hour') > ver.date_to
                                      WHEN 1
                                         THEN 'DELAYED'
                                      ELSE 'ON_TIME'
