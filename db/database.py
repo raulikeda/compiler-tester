@@ -216,14 +216,14 @@ class DatabaseManager:
                 repos_to_remove = cursor.fetchall()
                 
                 # Delete test results first (foreign key constraint)
-                cursor.execute("""
-                    DELETE FROM TestResult 
-                    WHERE (git_username, repository_name) IN (
-                        SELECT git_username, repository_name 
-                        FROM Repository 
-                        WHERE installation_id = ?
-                    )
-                """, (installation_id,))
+                # cursor.execute("""
+                #     DELETE FROM TestResult 
+                #     WHERE (git_username, repository_name) IN (
+                #         SELECT git_username, repository_name 
+                #         FROM Repository 
+                #         WHERE installation_id = ?
+                #     )
+                # """, (installation_id,))
                 
                 # Delete repositories
                 cursor.execute("""
