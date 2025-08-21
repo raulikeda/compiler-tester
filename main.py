@@ -601,6 +601,7 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
                             <option value="Swift">Swift</option>
                             <option value="Rust">Rust</option>
                             <option value="Zig">Zig</option>
+                            <option value="Lua">Lua</option>
                         </select>
                     </div>
                 </div>
