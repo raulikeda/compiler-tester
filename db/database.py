@@ -71,6 +71,35 @@ class DatabaseManager:
                 return "failing"
         
         return "unknown"
+
+    def get_release_tags(self, git_username: str, repository_name: str) -> List[str]:
+        """Return distinct previously recorded release tags for a repository"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT DISTINCT release_name
+                FROM TestResult
+                WHERE git_username = ? AND repository_name = ?
+                """,
+                (git_username, repository_name),
+            )
+            rows = cursor.fetchall()
+            return [row[0] for row in rows]
+
+    def has_release_tag(self, git_username: str, repository_name: str, release_name: str) -> bool:
+        """Check if a release tag has already been recorded for a repository"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1 FROM TestResult
+                WHERE git_username = ? AND repository_name = ? AND release_name = ?
+                LIMIT 1
+                """,
+                (git_username, repository_name, release_name),
+            )
+            return cursor.fetchone() is not None
     
     def record_test_result(self, version_name: str, release_name: str, 
                           git_username: str, repository_name: str, 
@@ -136,6 +165,17 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM Semester WHERE name = ?", (semester_name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_version_info(self, semester_name: str, version_name: str) -> Optional[Dict[str, Any]]:
+        """Get version info for a given semester and version_name (e.g., v1.2)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM Version WHERE semester_name = ? AND version_name = ?",
+                (semester_name, version_name),
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
     

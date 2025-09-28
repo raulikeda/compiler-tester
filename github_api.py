@@ -19,6 +19,10 @@ GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
 
 def generate_jwt_token() -> str:
     """Generate JWT token for GitHub App authentication"""
+    # GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
+    GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")
+    GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
+    
     if not GITHUB_APP_PRIVATE_KEY or "Replace with" in GITHUB_APP_PRIVATE_KEY:
         raise Exception("GitHub App private key not configured")
     
@@ -45,6 +49,8 @@ def generate_jwt_token() -> str:
 async def get_installation_token(installation_id: int, jwt_token: str) -> str:
     """Get installation access token"""
     try:
+        GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")
+        GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
         logger.info(f"Requesting access token for installation {installation_id}")
         
         async with httpx.AsyncClient() as client:
@@ -92,6 +98,8 @@ async def get_installation_details(installation_id: int) -> Dict[str, Any]:
     Fetch installation details from GitHub API
     """
     try:
+        GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")
+        GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
         # Generate JWT token
         jwt_token = generate_jwt_token()
         
@@ -154,6 +162,8 @@ async def create_github_issue(
     Returns the issue URL if successful, None if failed
     """
     try:
+        GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "1578480")
+        GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY")
         # Generate JWT token
         jwt_token = generate_jwt_token()
         

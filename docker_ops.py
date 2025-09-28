@@ -28,6 +28,9 @@ async def run_docker_container_async(
     """
     Run Docker container asynchronously for compilation testing
     """
+    CALLBACK_URL = os.getenv("CALLBACK_URL", "https://compiler-tester.insper-comp.com.br/api/test-result")
+    API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
+
     try:
         # Extract version from release (first 4 characters)
         version_short = release[:4] if len(release) >= 4 else release
@@ -76,6 +79,8 @@ async def run_docker_container_async(
 async def _monitor_docker_process(process, git_username: str, repository_name: str, release: str):
     """Monitor Docker process completion and log results"""
     try:
+        CALLBACK_URL = os.getenv("CALLBACK_URL", "https://compiler-tester.insper-comp.com.br/api/test-result")
+        API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
         stdout, stderr = await process.communicate()
         
         if process.returncode == 0:

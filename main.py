@@ -807,7 +807,7 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=443, reload=True,
+    uvicorn.run("main:app", host="0.0.0.0", port=443, reload=False, log_level="info", access_log=True,
     ssl_certfile="/etc/letsencrypt/live/compiler-tester.insper-comp.com.br/fullchain.pem",
     ssl_keyfile="/etc/letsencrypt/live/compiler-tester.insper-comp.com.br/privkey.pem"
     )
