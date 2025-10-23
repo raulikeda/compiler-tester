@@ -6,6 +6,7 @@ import os
 import asyncio
 import logging
 from typing import Optional
+from db.database import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,30 @@ async def _monitor_docker_process(process, git_username: str, repository_name: s
     try:
         CALLBACK_URL = os.getenv("CALLBACK_URL", "https://compiler-tester.insper-comp.com.br/api/test-result")
         API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
-        stdout, stderr = await process.communicate()
+        #stdout, stderr = await process.communicate()
+        # Wait for process to complete, but enforce timeout
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            logger.warning(f"Docker timeout after {timeout}s for {git_username}/{repository_name}:{release}")
+            process.kill()
+            await process.wait()
+            repo_info = db_manager.get_repository_info(git_username, repository_name)
+            installation_id = repo_info['installation_id']
+            url = await create_github_issue(
+                git_username=git_username,
+                repository_name=repository_name,
+                installation_id=installation_id,
+                title="Docker container - FAILED",
+                body="Your submission failed the automated tests. Something in your submission is crashing the container."
+            )
+
+            if url:
+                logger.info(f"Issue created: {url}")
+            else:
+                logger.warning("Issue creation failed")
+
+            return  # You can also send a timeout result to CALLBACK_URL here
         
         if process.returncode == 0:
             logger.info(f"Docker container completed successfully for {git_username}/{repository_name}:{release}")
