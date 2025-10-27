@@ -172,6 +172,9 @@ async def create_github_issue(
         
         # Create the issue
         async with httpx.AsyncClient() as client:
+            if len(body) > 60000:
+                body = body[:60000] + "\nMessage Truncated."
+
             response = await client.post(
                 f"https://api.github.com/repos/{git_username}/{repository_name}/issues",
                 headers={
