@@ -54,13 +54,19 @@ class RepoReport:
                         '</svg>'
             return self.code
 
+        vcount = 0
         for tag in self.taglist:
-            tagcode += tag.compile(xpos)
+            if tag.version[0] == 'v':
+                tagcode += tag.compile(xpos)
+                vcount += 1
+            elif tag.version[0] == 'x':
+                tagcode += tag.compile(xpos - (vcount - 1) * (tag.width + self.hspace))
+
             xpos = xpos + tag.width + self.hspace
 
         self.width = xpos - self.hspace
 
-        self.code = '<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">\n'.format(self.width, self.height) + \
+        self.code = '<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">\n'.format(self.width, self.height + 25) + \
                     '<linearGradient id="a" x2="0" y2="100%">\n' + \
                     '    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>\n' + \
                     '    <stop offset="1" stop-opacity=".1"/>\n' + \
@@ -131,13 +137,15 @@ class TagReport():
         xtextversion = x + self.versiontextoffset
         xtextdelivery = x + self.versionwidth + self.deliverytextoffset
         xtexttest = x + self.versionwidth + self.deliverywidth + self.testtextoffset
-
-        self.code = '<rect rx="3" x="{}" y="0" width="{}" height="{}" fill="#595959"/>\n'.format(x, self.width, self.height) + \
-                    '<rect rx="3" x="{}" y="0" width="{}" height="{}" fill="{}"/>\n'.format(xtest, self.testwidth, self.height, self.testcolor) + \
-                    '<rect rx="0" x="{}" y="0" width="{}" height="{}" fill="{}"/>\n'.format(xdelivery, self.deliverywidth, self.height, self.deliverycolor) + \
+        y = 0
+        if self.version[0] == 'x':
+            y += self.height + 5
+        self.code = '<rect rx="3" x="{}" y="{}" width="{}" height="{}" fill="#595959"/>\n'.format(x, y, self.width, self.height) + \
+                    '<rect rx="3" x="{}" y="{}" width="{}" height="{}" fill="{}"/>\n'.format(xtest, y, self.testwidth, self.height, self.testcolor) + \
+                    '<rect rx="0" x="{}" y="{}" width="{}" height="{}" fill="{}"/>\n'.format(xdelivery, y, self.deliverywidth, self.height, self.deliverycolor) + \
                     '<g fill="#fff" text-anchor="middle" font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="11">\n' + \
-                    '    <text x="{}" y="15" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="14">{}</text>\n'.format(xtextversion, self.version, xtextversion, self.version) + \
-                    '    <text x="{}" y="15" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="14">{}</text>\n'.format(xtextdelivery, self.deliverystatus, xtextdelivery, self.deliverystatus) + \
-                    '    <text x="{}" y="15" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="14">{}</text>\n'.format(xtexttest, self.teststatus, xtexttest, self.teststatus) + \
+                    '    <text x="{}" y="{}" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="{}">{}</text>\n'.format(xtextversion, 15 + y, self.version, xtextversion, 14 + y, self.version) + \
+                    '    <text x="{}" y="{}" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="{}">{}</text>\n'.format(xtextdelivery, 15 + y, self.deliverystatus, xtextdelivery, 14 + y, self.deliverystatus) + \
+                    '    <text x="{}" y="{}" fill="#010101" fill-opacity=".3">{}</text><text x="{}" y="{}">{}</text>\n'.format(xtexttest, 15 + y, self.teststatus, xtexttest, 14 + y, self.teststatus) + \
                     '</g>\n'
         return(self.code)

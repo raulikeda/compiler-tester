@@ -5,6 +5,8 @@ __pycache__/
 
 *.pem
 *.db
+db/backup/
+log/
 *.log
 mig-*
 
