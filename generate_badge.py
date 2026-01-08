@@ -45,6 +45,7 @@ class RepoReport:
 
     def compile(self):
         tagcode = ''
+        vpos = 0
         xpos = 0
 
         if self.error:
@@ -57,14 +58,21 @@ class RepoReport:
         vcount = 0
         for tag in self.taglist:
             if tag.version[0] == 'v':
-                tagcode += tag.compile(xpos)
+                tagcode += tag.compile(vpos)
                 vcount += 1
+
+                vpos = vpos + tag.width + self.hspace
+
             elif tag.version[0] == 'x':
-                tagcode += tag.compile(xpos - (vcount - 1) * (tag.width + self.hspace))
+                if xpos == 0:
+                    xpos = xpos + tag.width + self.hspace
+                tagcode += tag.compile(xpos)
 
-            xpos = xpos + tag.width + self.hspace
+                xpos = xpos + tag.width + self.hspace
 
-        self.width = xpos - self.hspace
+            
+
+        self.width = max(vpos, xpos) - self.hspace
 
         self.code = '<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">\n'.format(self.width, self.height + 25) + \
                     '<linearGradient id="a" x2="0" y2="100%">\n' + \

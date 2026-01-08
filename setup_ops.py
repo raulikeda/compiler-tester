@@ -137,7 +137,7 @@ async def process_setup_save(request: Request):
                 logger.error(f"Error adding badges: {e}")
         
         return generate_setup_success_page(
-            success_repos, failed_repos, badge_results, add_badges
+            success_repos, failed_repos, badge_results, add_badges, program_call
         )
         
     except Exception as e:
@@ -149,7 +149,8 @@ def generate_setup_success_page(
     success_repos: list, 
     failed_repos: list, 
     badge_results: dict, 
-    add_badges: bool
+    add_badges: bool,
+    program_call: str = "python3 main.py"
 ) -> HTMLResponse:
     """Generate HTML success page for setup completion"""
     
@@ -243,12 +244,15 @@ def generate_setup_success_page(
                 {success_list}
                 {f'<br><br><strong>Failed:</strong><br>{failure_list}' if failure_list else ''}
                 {badge_message}
+                <br><br><strong>How the server will run your program:</strong><br> $ {program_call} [arguments]
             </div>
             
-            <p><strong>Repository Links:</strong></p>
+            <p><strong>Repository Link:</strong></p>
             <div>
                 {''.join([f'<a href="https://github.com/{repo.split("/")[0]}/{repo.split("/")[1]}" class="repo-link">{repo}</a>' for repo in success_repos])}
             </div>
+            
+            <p>
             
             <p><strong>Next Steps:</strong></p>
             <ul style="text-align: left;">

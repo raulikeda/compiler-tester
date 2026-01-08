@@ -14,12 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_semver(tag: str):
-    """Parse tags like vX.Y.Z into a tuple of ints (X, Y, Z). Return None if invalid."""
+    """Parse tags like vX.Y.Z or xX.Y.Z into a tuple of ints (X, Y, Z). Return None if invalid."""
     if not isinstance(tag, str):
         return None
     m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
     if not m:
-        return None
+        m = re.fullmatch(r"x(\d+)\.(\d+)\.(\d+)", tag)
+        if not m:
+            return None
     return tuple(int(part) for part in m.groups())
 
 
@@ -31,7 +33,7 @@ def _is_greater_semver(a: str, b: str) -> bool:
         return False
     a_major, a_minor, a_patch = va
     b_major, b_minor, b_patch = vb
-    if a_major == b_major:
+    if a[0] == b[0] and a_major == b_major:
         if a_minor == b_minor:
             return a_patch > b_patch
 
@@ -47,16 +49,16 @@ async def process_tag_event(git_username: str, repository_name: str, tag_name: s
             logger.warning(f"Repository {git_username}/{repository_name} not found in database")
             return False
 
-        # Validate tag format vX.X.X
+        # Validate tag format vX.X.X or xX.X.X
         if _parse_semver(tag_name) is None:
-            logger.info(f"Ignoring tag with invalid format: {tag_name} (expected vX.X.X)")
+            logger.info(f"Ignoring tag with invalid format: {tag_name} (expected vX.X.X or xX.X.X)")
             issue_url = None
             try:
                 if repo_info.get('installation_id'):
                     title = f"Invalid tag: {tag_name}"
                     body = (
                         f"An invalid tag was created: `{tag_name}`.\n\n"
-                        f"The expected pattern is `vX.X.X` (e.g., `v1.2.3`).\n\n"
+                        f"The expected pattern is `vX.X.X` or `xX.X.X` (e.g., `v1.2.3` or `x1.2.3`).\n\n"
                         f"Please create a new tag following the semantic version pattern."
                     )
                     issue_url = await create_github_issue(
@@ -67,7 +69,7 @@ async def process_tag_event(git_username: str, repository_name: str, tag_name: s
             return {
                 "status": "ignored",
                 "reason": "invalid_format",
-                "message": "Tag must follow vX.X.X",
+                "message": "Tag must follow vX.X.X or xX.X.X",
                 "tag": tag_name,
                 "issue_url": issue_url,
             }
@@ -135,7 +137,7 @@ async def process_tag_event(git_username: str, repository_name: str, tag_name: s
             return {
                 "status": "ignored",
                 "reason": "invalid_format",
-                "message": "Tag must follow vX.X.X",
+                "message": "Tag must follow vX.X.X or xX.X.X",
                 "tag": tag_name,
             }
 
