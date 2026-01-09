@@ -196,6 +196,9 @@ class DatabaseManager:
     def save_repository_with_installation(self, git_username: str, repository_name: str, installation_id: int) -> bool:
         """Save repository with installation_id and empty/default values for other fields"""
         try:
+            # Remove the test results first for last semester only
+            self.remove_test_results_for_repo(git_username, repository_name)
+
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -348,11 +351,18 @@ class DatabaseManager:
         """Remove all test results for a specific repository"""
         try:
             with self.get_connection() as conn:
+                # get actual semester beginning: %Y-01-01 or %Y-07-01
+                current_date = datetime.now()
+                if current_date.month < 7:
+                    semester_name = f"{current_date.year}-01-01"
+                else:
+                    semester_name = f"{current_date.year}-07-01"
+
                 cursor = conn.cursor()
                 cursor.execute("""
                     DELETE FROM TestResult 
-                    WHERE git_username = ? AND repository_name = ?
-                """, (git_username, repository_name))
+                    WHERE git_username = ? AND repository_name = ? AND date_run < ?
+                """, (git_username, repository_name, semester_name))
                 
                 deleted_count = cursor.rowcount
                 conn.commit()
