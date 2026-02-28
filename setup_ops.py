@@ -79,14 +79,19 @@ async def process_setup_save(request: Request):
                 "TypeScript": 'ts-node --skip-project --transpile-only --compiler-options \'{"module":"commonjs"}\' main.ts',
                 "Go": "go run main.go",
                 "OCaml": "ocaml main.ml",
-                "Kotlin": "kotlinc -script main.kts",
+                "Kotlin": "kotlinc main.kt -include-runtime -d app.jar && java -jar app.jar",
                 "C++": "g++ main.cpp -o main && ./main",
                 "C#": "dotnet run main.csproj",
                 "PHP": "php main.php",
-                "Rust": "cargo run --release",
+                "Rust": "cargo run --release --",
                 "Swift": "swift main.swift",
                 "Zig": "zig run main.zig --",
-                "Lua": "lua main.lua"
+                "Lua": "lua main.lua",
+                "Dart": "dart --suppress-analytics run main.dart",
+                "Haskell": "runghc main.hs",
+                "Java": "java main.java",
+                "Ruby": "ruby main.rb",
+                "Nim": "nim r --hints:off main.nim"
             }
             program_call = program_call_map.get(language, "")
             if language in ["Java", "C++", "C#"]:

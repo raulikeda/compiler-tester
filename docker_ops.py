@@ -58,7 +58,7 @@ async def run_docker_container_async(
         ]
         
         logger.info(f"Starting Docker container for {git_username}/{repository_name}:{release}")
-        logger.info(f"Docker command: {' '.join(docker_cmd[:4])} ... (args hidden for security)")
+        logger.info(f"Docker command: {' '.join(docker_cmd)}")
         
         # Run Docker container asynchronously
         process = await asyncio.create_subprocess_exec(

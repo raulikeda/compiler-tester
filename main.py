@@ -1,9 +1,10 @@
-from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header
+from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header, Query
 from fastapi.responses import Response, HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 import json
 import logging
 from typing import Dict, Any, List, Optional, Annotated
+from collections import defaultdict
 from db.database import db_manager
 import generate_badge as sr
 import time
@@ -17,11 +18,15 @@ from docker_ops import run_docker_container_async
 from webhook_handler import process_webhook_payload
 from badge_ops import add_badge_to_readme, add_badges_to_installation_repos
 from setup_ops import process_setup_save
+import data_ops
 
 load_dotenv()
 
 # API Secret for secure endpoints
 API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
+
+# Dashboard Secret for visualization access
+DASH_SECRET = os.getenv("DASH_SECRET", "your-default-dash-secret-change-me")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,10 +75,325 @@ async def verify_api_secret(x_api_secret: Annotated[str, Header()]) -> str:
         )
     return x_api_secret
 
+def translate_grade(num: int) -> str:
+    """Translate numeric grade to letter grade"""
+    mapping = {
+        10: 'A+',
+        9: 'A',
+        8: 'B+',
+        7: 'B',
+        6: 'C+',
+        5: 'C',
+        0: 'I'
+    }
+    return mapping.get(num, 'D')
+
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {"message": "Compiler Tester API is running"}
+
+@app.get("/repositories/{semester_name}", response_class=HTMLResponse)
+async def get_repositories(semester_name: str, secret: str = Query(None)):
+    """Get all repositories in a semester with their release statuses"""
+    logger.info(f"Dashboard access attempt for semester {semester_name}, secret provided: {secret is not None}, DASH_SECRET loaded: {DASH_SECRET is not None}")
+    if secret != DASH_SECRET:
+        logger.warning(f"Access denied: provided secret '{secret}' does not match expected")
+        return HTMLResponse(content="<h1>Access Denied</h1><p>Invalid or missing secret.</p>", status_code=401)
+    
+    try:
+        repositories = data_ops.get_repositories_with_status(semester_name)
+        last_test_results = data_ops.get_last_test_results(semester_name)
+        
+        # Create issue_text map
+        issue_map = {}
+        for tr in last_test_results:
+            key = (tr['git_username'], tr['repository_name'], tr['version_name'])
+            issue_map[key] = tr.get('issue_text', '')
+        
+        # Build pivot table
+        from collections import defaultdict
+        
+        # Get unique versions
+        versions = sorted(set(repo['version_name'] for repo in repositories))
+        
+        # Group by (git_username, repository_name)
+        repo_data = defaultdict(dict)
+        for repo in repositories:
+            key = (repo['git_username'], repo['repository_name'])
+            repo_data[key][repo['version_name']] = {
+                'test_status': repo['test_status'],
+                'delivery_status': repo['delivery_status'],
+                'language': repo['language'],
+                'last_release_name': repo.get('last_release_name', 'N/A'),
+                'semester_name': repo['semester_name'],
+                'name': repo['name']
+            }
+        
+        # Build HTML table
+        html = f"""
+        <html>
+        <head>
+            <title>Repositories for {semester_name}</title>
+            <style>
+                table {{ border-collapse: collapse; width: 100%; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; cursor: pointer; }}
+                th:hover {{ background-color: #ddd; }}
+                .semester-col {{ width: 70px; }}
+                .balloon {{
+                    position: absolute;
+                    background: #e6f7ff;
+                    border: 1px solid #ccc;
+                    padding: 10px;
+                    border-radius: 5px;
+                    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+                    display: none;
+                    z-index: 1000;
+                    max-width: 300px;
+                    word-wrap: break-word;
+                    white-space: pre-wrap;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>Repositories for Semester: {semester_name}</h1>
+            <table id="repoTable">
+                <thead>
+                    <tr>
+                        <th class="semester-col">Semester</th>
+                        <th>Grade</th>
+                        <th>Name</th>
+                        <th>User/Repo</th>                        
+                        <th>Language</th>
+        """
+        
+        for v in versions:
+            html += f"<th>{v}</th>"
+        
+        html += """
+                    </tr>
+                </thead>
+                <tbody>
+        """
+        
+        for key, data in repo_data.items():
+            git_username, repository_name = key
+            language = list(data.values())[0]['language']  # assume same
+            semester = list(data.values())[0]['semester_name']  # assume same
+            name_full = list(data.values())[0]['name']  # assume same
+            parts = name_full.split()
+            if len(parts) >= 2:
+                display_name = f"{parts[0]} {parts[-1]}"
+            else:
+                display_name = name_full
+            # Calculate grade
+            delayed_count = 0
+            extra_point = 0
+            for v in versions:
+                if v in data and data[v]['delivery_status'] == 'DELAYED' and v.startswith('v'):
+                    delayed_count += 1
+                if v in data and data[v]['test_status'] == 'PASS' and v.startswith('x'):
+                    if v[1:] < '2.3':
+                        extra_point += 0.3
+                    else:
+                        extra_point += 0.6
+            grade_num = 7 - 0.5 * delayed_count + extra_point
+            grade_letter = translate_grade(int(grade_num))
+            gitrepo_name = f"{git_username}/{repository_name}"
+            if len(gitrepo_name) > 30:
+                gitrepo_name = gitrepo_name[:27] + "..."
+            row = f'<tr><td class="semester-col">{semester}</td><td>{grade_letter} ({grade_num:.2f})</td><td title="{name_full}">{display_name}</td><td title="{repository_name}">{gitrepo_name}</td><td>{language}</td>'
+            
+            for v in versions:
+                if v in data:
+                    test_status = data[v]['test_status']
+                    delivery_status = data[v]['delivery_status']
+                    last_release = data[v]['last_release_name']
+                    test_status_display = test_status if test_status != 'NOT_FOUND' else 'NOT FOUND'
+                    
+                    # Determine style
+                    if test_status == 'PASS' and delivery_status == 'ON_TIME':
+                        style = 'background-color: green; color: white;'
+                    elif test_status == 'PASS' and delivery_status == 'DELAYED':
+                        style = 'background-color: orange; color: white;'
+                    elif test_status == 'FAILED' and delivery_status == 'ON_TIME':
+                        style = 'background-color: red; color: white;'
+                    elif test_status == 'FAILED' and delivery_status == 'DELAYED':
+                        style = 'background-color: purple; color: white;'
+                    elif test_status == 'ERROR':
+                        style = 'background-color: black; color: white;'
+                    else:
+                        style = ''
+                    
+                    cell_content = f"{last_release} {test_status_display}" if test_status_display != 'NOT FOUND' else test_status_display
+                    onclick_attr = ''
+                    if test_status in ['FAILED', 'ERROR']:
+                        issue_key = (git_username, repository_name, v)
+                        issue_text = issue_map.get(issue_key, '')
+                        if issue_text:
+                            escaped_text = issue_text.replace('"', '\\"').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
+                            onclick_attr = f" onclick=\"showBalloon(this, '{escaped_text}')\""
+                    row += f'<td style="{style}"{onclick_attr}>{cell_content}</td>'
+                else:
+                    row += '<td></td>'
+            
+            row += '</tr>'
+            html += row
+        
+        html += """
+                </tbody>
+            </table>
+        """
+
+        semesters = sorted(set(repo['semester_name'] for repo in repositories))
+
+        total_records = {}
+        total_pass = {}
+        total_not_found = {}
+        total_delayed = {}
+        total_failed = {}
+        total_error = {}
+
+        for semester in semesters:
+        
+            total_records[semester] = len([r for r in repositories if r['semester_name'] == semester])
+            total_pass[semester] = sum(1 for r in repositories if r['test_status'] == 'PASS' and r['semester_name'] == semester)
+            total_not_found[semester] = sum(1 for r in repositories if r['test_status'] == 'NOT_FOUND' and r['semester_name'] == semester)
+            total_delayed[semester] = sum(1 for r in repositories if r['test_status'] == 'DELAYED' and r['semester_name'] == semester)
+            total_failed[semester] = sum(1 for r in repositories if r['test_status'] == 'FAILED' and r['semester_name'] == semester)
+            total_error[semester] = sum(1 for r in repositories if r['test_status'] == 'ERROR' and r['semester_name'] == semester)
+
+        total_each_language = {}
+        for key, data in repo_data.items():
+            lang = list(data.values())[0]['language']
+            total_each_language[lang] = total_each_language.get(lang, 0) + 1
+        # Order by language count
+        total_each_language = dict(sorted(total_each_language.items(), key=lambda item: item[1], reverse=True))
+        
+        # Totals per version
+        from collections import defaultdict
+        total_pass_per_version = defaultdict(int)
+        total_failed_per_version = defaultdict(int)
+        total_not_found_per_version = defaultdict(int)
+        total_error_per_version = defaultdict(int)
+        total_delayed_per_version = defaultdict(int)
+        
+        for r in repositories:
+            v = r['version_name']
+            if r['test_status'] == 'PASS':
+                total_pass_per_version[v] += 1
+            elif r['test_status'] == 'FAILED':
+                total_failed_per_version[v] += 1
+            elif r['test_status'] == 'NOT_FOUND':
+                total_not_found_per_version[v] += 1
+            elif r['test_status'] == 'ERROR':
+                total_error_per_version[v] += 1
+            if r['delivery_status'] == 'DELAYED':
+                total_delayed_per_version[v] += 1
+        
+        # Totals per semester per version
+        total_pass_per_semester_version = defaultdict(lambda: defaultdict(int))
+        total_failed_per_semester_version = defaultdict(lambda: defaultdict(int))
+        total_not_found_per_semester_version = defaultdict(lambda: defaultdict(int))
+        total_error_per_semester_version = defaultdict(lambda: defaultdict(int))
+        total_delayed_per_semester_version = defaultdict(lambda: defaultdict(int))
+        
+        for r in repositories:
+            s = r['semester_name']
+            v = r['version_name']
+            if r['test_status'] == 'PASS':
+                total_pass_per_semester_version[s][v] += 1
+            elif r['test_status'] == 'FAILED':
+                total_failed_per_semester_version[s][v] += 1
+            elif r['test_status'] == 'NOT_FOUND':
+                total_not_found_per_semester_version[s][v] += 1
+            elif r['test_status'] == 'ERROR':
+                total_error_per_semester_version[s][v] += 1
+            if r['delivery_status'] == 'DELAYED':
+                total_delayed_per_semester_version[s][v] += 1
+        
+        html += f"""
+                </tbody>
+            </table>
+            <p>Total records: </p>
+        """
+        for v in versions:
+            total_for_v = total_pass_per_version[v] + total_failed_per_version[v] + total_not_found_per_version[v] + total_error_per_version[v]
+            html += f"""
+            <p style="margin-left: 20px;"> - {v} - Total: {total_for_v} / PASS: {total_pass_per_version[v]} / FAILED: {total_failed_per_version[v]} / NOT_FOUND: {total_not_found_per_version[v]} / ERROR: {total_error_per_version[v]} / DELAYED: {total_delayed_per_version[v]}</p>
+            """
+        html += f"""
+            <p>Semesters: </p>
+        """
+        for semester in semesters:
+            html += f"""
+            <p style="margin-left: 20px;">{semester}:</p>
+            """
+            for v in versions:
+                total_for_sv = total_pass_per_semester_version[semester][v] + total_failed_per_semester_version[semester][v] + total_not_found_per_semester_version[semester][v] + total_error_per_semester_version[semester][v]
+                html += f"""
+            <p style="margin-left: 40px;">  - {v} - Total: {total_for_sv} / PASS: {total_pass_per_semester_version[semester][v]} / FAILED: {total_failed_per_semester_version[semester][v]} / NOT_FOUND: {total_not_found_per_semester_version[semester][v]} / ERROR: {total_error_per_semester_version[semester][v]} / DELAYED: {total_delayed_per_semester_version[semester][v]}</p>
+                """
+        html += f"""
+            <p>Languages: {', '.join(f"{lang} ({count})" for lang, count in total_each_language.items())}</p>
+            <script>
+                function showBalloon(cell, text) {{
+                    // Remove any existing balloon
+                    const existing = document.querySelector('.balloon');
+                    if (existing) existing.remove();
+                    // Create new balloon
+                    const balloon = document.createElement('div');
+                    balloon.className = 'balloon';
+                    balloon.textContent = text;
+                    document.body.appendChild(balloon);
+                    // Position it
+                    const rect = cell.getBoundingClientRect();
+                    balloon.style.left = (rect.left + window.scrollX) + 'px';
+                    balloon.style.top = (rect.bottom + window.scrollY + 5) + 'px';
+                    balloon.style.display = 'block';
+                    // Hide on click outside
+                    document.addEventListener('click', function hide(e) {{
+                        if (!balloon.contains(e.target) && e.target !== cell) {{
+                            balloon.remove();
+                            document.removeEventListener('click', hide);
+                        }}
+                    }});
+                }}
+                const table = document.getElementById('repoTable');
+                const headers = table.querySelectorAll('th');
+                const tbody = table.querySelector('tbody');
+                const directions = Array.from(headers).map(() => 'asc');
+
+                headers.forEach((header, index) => {{
+                    header.addEventListener('click', () => {{
+                        const column = index;
+                        const isAsc = directions[column] === 'asc';
+                        directions[column] = isAsc ? 'desc' : 'asc';
+
+                        const rows = Array.from(tbody.querySelectorAll('tr'));
+                        rows.sort((a, b) => {{
+                            const aVal = a.children[column].textContent.trim();
+                            const bVal = b.children[column].textContent.trim();
+                            
+                            if (!isNaN(aVal) && !isNaN(bVal)) {{
+                                return isAsc ? aVal - bVal : bVal - aVal;
+                            }}
+                            
+                            return isAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                        }});
+                        
+                        rows.forEach(row => tbody.appendChild(row));
+                    }});
+                }});
+            </script>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -602,6 +922,11 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
                             <option value="Rust">Rust</option>
                             <option value="Zig">Zig</option>
                             <option value="Lua">Lua</option>
+                            <option value="Dart">Dart</option>
+                            <option value="Haskell">Haskell</option>
+                            <option value="Java">Java</option>
+                            <option value="Ruby">Ruby</option>
+                            <option value="Nim">Nim</option>
                         </select>
                     </div>
                 </div>
