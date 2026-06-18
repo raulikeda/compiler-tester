@@ -76,7 +76,7 @@ async def process_setup_save(request: Request):
             program_call_map = {
                 "Python": "python3 main.py",
                 "JavaScript": "node main.js", 
-                "TypeScript": 'ts-node --skip-project --transpile-only --compiler-options \'{"module":"commonjs"}\' main.ts',
+                "TypeScript": 'ts-node --skip-project --transpile-only --compiler-options \'{"module":"commonjs","moduleResolution":"node","ignoreDeprecations":"6.0"}\' main.ts',
                 "Go": "go run main.go",
                 "OCaml": "ocaml main.ml",
                 "Kotlin": "kotlinc main.kt -include-runtime -d app.jar && java -jar app.jar",

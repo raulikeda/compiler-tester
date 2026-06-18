@@ -35,21 +35,27 @@ async def run_docker_container_async(
     try:
         # Extract version from release (first 4 characters)
         version_short = release[:4] if len(release) >= 4 else release
+
+        javascript = ['typescript', 'cpp', 'lua', 'ruby', 'go', 'php', 'nim']
+        java = ['kotlin']
+
+        container_language = repo_language.lower().replace("#","s").replace("++","pp")
+        if container_language in javascript:
+            container_language = 'javascript'
+        elif container_language in java:
+            container_language = 'java'
         
         # Build Docker command
         docker_cmd = [
-            "docker", "run", "--rm", "-it",
-            "-e", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
-            "-e", "DOTNET_NOLOGO=1",
-            "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
-            f"compiler-testing-lib-{repo_language.lower().replace("#","s").replace("++","pp")}",
+            "docker", "run", "--rm",            
+            f"compiler-testing-lib-{container_language}",
             "--git_username", git_username,
             "--git_repository", repository_name,
             "--language", language,
             "--version", version_short,
             "--file_extension", file_extension,
             "--max_errors", "5",
-            "--timeout", "30",
+            "--timeout", "90",
             "--command_template", command_template,
             "--token", access_token,
             "--release", release,
@@ -85,6 +91,7 @@ async def _monitor_docker_process(process, git_username: str, repository_name: s
         #stdout, stderr = await process.communicate()
         # Wait for process to complete, but enforce timeout
         try:
+            timeout = 180
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
         except asyncio.TimeoutError:
             logger.warning(f"Docker timeout after {timeout}s for {git_username}/{repository_name}:{release}")

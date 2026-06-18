@@ -1,8 +1,11 @@
 from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header, Query
 from fastapi.responses import Response, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 import json
+import html as html_escape
 import logging
+from copy import deepcopy
 from typing import Dict, Any, List, Optional, Annotated
 from collections import defaultdict
 from db.database import db_manager
@@ -19,6 +22,8 @@ from webhook_handler import process_webhook_payload
 from badge_ops import add_badge_to_readme, add_badges_to_installation_repos
 from setup_ops import process_setup_save
 import data_ops
+from security.middleware import IPBlockingMiddleware
+from security.ip_blocker import ip_blocker
 
 load_dotenv()
 
@@ -29,20 +34,61 @@ API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 DASH_SECRET = os.getenv("DASH_SECRET", "your-default-dash-secret-change-me")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="Compiler Tester API",
-    description="API for handling GitHub webhooks, badges, and authentication",
-    version="1.0.0"
-)
+
+def build_uvicorn_log_config() -> dict:
+    """Ensure uvicorn INFO/access logs use timestamped formatting."""
+    import uvicorn.config
+
+    log_config = deepcopy(uvicorn.config.LOGGING_CONFIG)
+
+    default_formatter = log_config.get("formatters", {}).get("default")
+    if default_formatter is not None:
+        default_formatter["fmt"] = "%(asctime)s - %(levelprefix)s %(message)s"
+        default_formatter["datefmt"] = "%Y-%m-%d %H:%M:%S"
+
+    access_formatter = log_config.get("formatters", {}).get("access")
+    if access_formatter is not None:
+        access_formatter["fmt"] = "%(asctime)s - %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+        access_formatter["datefmt"] = "%Y-%m-%d %H:%M:%S"
+
+    return log_config
 
 app = FastAPI(
     title="Compiler Tester API",
     description="API for handling GitHub webhooks, badges, and authentication",
     version="1.0.0"
 )
+
+# Favicon middleware - silently handle favicon requests without logging
+class SilentFaviconMiddleware:
+    def __init__(self, app):
+        self.app = app
+    
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/favicon.ico":
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [[b"content-length", b"0"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"",
+            })
+            return
+        await self.app(scope, receive, send)
+
+app.add_middleware(SilentFaviconMiddleware)
+
+# Add IP blocking middleware
+app.add_middleware(IPBlockingMiddleware)
+
+# Mount static files (for favicon and other static assets)
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Pydantic models for API endpoints
 class TestResultData(BaseModel):
@@ -115,7 +161,10 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
         from collections import defaultdict
         
         # Get unique versions
-        versions = sorted(set(repo['version_name'] for repo in repositories))
+        versions = sorted(set(repo['version_name'] for repo in repositories), key=lambda v: (float(v[1:]), v[0]))
+        v_versions = [v for v in versions if v.startswith('v')]
+        x_versions = [v for v in versions if v.startswith('x')]
+        x_version_nums = set(v[1:] for v in x_versions)
         
         # Group by (git_username, repository_name)
         repo_data = defaultdict(dict)
@@ -161,15 +210,26 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
             <table id="repoTable">
                 <thead>
                     <tr>
-                        <th class="semester-col">Semester</th>
-                        <th>Grade</th>
-                        <th>Name</th>
-                        <th>User/Repo</th>                        
-                        <th>Language</th>
+                        <th class="semester-col" rowspan="2">Semester</th>
+                        <th rowspan="2">Grade</th>
+                        <th rowspan="2">Name</th>
+                        <th rowspan="2">User/Repo</th>
+                        <th rowspan="2">Language</th>
         """
         
-        for v in versions:
-            html += f"<th>{v}</th>"
+        for v in v_versions:
+            if v[1:] not in x_version_nums:
+                html += f'<th rowspan="2">{v}</th>'
+            else:
+                html += f"<th>{v}</th>"
+        
+        html += """
+                    </tr>
+                    <tr>
+        """
+        
+        for x in x_versions:
+            html += f"<th>{x}</th>"
         
         html += """
                     </tr>
@@ -183,8 +243,10 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
             semester = list(data.values())[0]['semester_name']  # assume same
             name_full = list(data.values())[0]['name']  # assume same
             parts = name_full.split()
-            if len(parts) >= 2:
-                display_name = f"{parts[0]} {parts[-1]}"
+            if len(parts) >= 3:
+                display_name = f"{parts[0].capitalize()} {parts[1][0].capitalize()}. {parts[-1].capitalize()}"
+            elif len(parts) == 2:
+                display_name = f"{parts[0].capitalize()} {parts[-1].capitalize()}"
             else:
                 display_name = name_full
             # Calculate grade
@@ -193,53 +255,90 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
             for v in versions:
                 if v in data and data[v]['delivery_status'] == 'DELAYED' and v.startswith('v'):
                     delayed_count += 1
-                if v in data and data[v]['test_status'] == 'PASS' and v.startswith('x'):
+                if v in data and data[v]['test_status'] == 'PASS' and v.startswith('x') and data[v]['delivery_status'] != 'DELAYED':
                     if v[1:] < '2.3':
                         extra_point += 0.3
                     else:
                         extra_point += 0.6
             grade_num = 7 - 0.5 * delayed_count + extra_point
+            if language not in ['Python', 'JavaScript']:
+                grade_num += 1
             grade_letter = translate_grade(int(grade_num))
             gitrepo_name = f"{git_username}/{repository_name}"
             if len(gitrepo_name) > 30:
                 gitrepo_name = gitrepo_name[:27] + "..."
-            row = f'<tr><td class="semester-col">{semester}</td><td>{grade_letter} ({grade_num:.2f})</td><td title="{name_full}">{display_name}</td><td title="{repository_name}">{gitrepo_name}</td><td>{language}</td>'
+            row1 = f'<tr data-pair-first="true"><td class="semester-col" rowspan="2">{semester}</td><td rowspan="2">{grade_num:.2f} ({grade_letter})</td><td rowspan="2" title="{name_full}">{display_name}</td><td rowspan="2" title="{repository_name}">{gitrepo_name}</td><td rowspan="2">{language}</td>'
+            row2 = '<tr>'
             
-            for v in versions:
+            for v in v_versions:
+                rowspan_attr = ' rowspan="2"' if v[1:] not in x_version_nums else ''
                 if v in data:
                     test_status = data[v]['test_status']
                     delivery_status = data[v]['delivery_status']
-                    last_release = data[v]['last_release_name']
-                    test_status_display = test_status if test_status != 'NOT_FOUND' else 'NOT FOUND'
-                    
-                    # Determine style
+                    test_status_display = test_status if test_status != 'NOT_FOUND' else 'N/A'
                     if test_status == 'PASS' and delivery_status == 'ON_TIME':
                         style = 'background-color: green; color: white;'
                     elif test_status == 'PASS' and delivery_status == 'DELAYED':
-                        style = 'background-color: orange; color: white;'
+                        style = 'background-color: darkorange; color: white;'
                     elif test_status == 'FAILED' and delivery_status == 'ON_TIME':
                         style = 'background-color: red; color: white;'
                     elif test_status == 'FAILED' and delivery_status == 'DELAYED':
                         style = 'background-color: purple; color: white;'
                     elif test_status == 'ERROR':
                         style = 'background-color: black; color: white;'
+                    elif test_status == 'NOT_FOUND' and delivery_status == 'DELAYED':
+                        style = 'background-color: saddlebrown; color: white;'
                     else:
                         style = ''
-                    
-                    cell_content = f"{last_release} {test_status_display}" if test_status_display != 'NOT FOUND' else test_status_display
+                    cell_content = test_status_display
                     onclick_attr = ''
                     if test_status in ['FAILED', 'ERROR']:
                         issue_key = (git_username, repository_name, v)
                         issue_text = issue_map.get(issue_key, '')
                         if issue_text:
-                            escaped_text = issue_text.replace('"', '\\"').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
-                            onclick_attr = f" onclick=\"showBalloon(this, '{escaped_text}')\""
-                    row += f'<td style="{style}"{onclick_attr}>{cell_content}</td>'
+                            json_text = json.dumps(issue_text)
+                            html_escaped = html_escape.escape(json_text, quote=True)
+                            onclick_attr = f" data-issue-text='{html_escaped}' onclick='showBalloon(this, JSON.parse(this.getAttribute(\"data-issue-text\")))'"  
+                    row1 += f'<td style="{style}"{rowspan_attr}{onclick_attr}>{cell_content}</td>'
                 else:
-                    row += '<td></td>'
+                    row1 += f'<td{rowspan_attr}></td>'
             
-            row += '</tr>'
-            html += row
+            row1 += '</tr>'
+            
+            for x in x_versions:
+                if x in data:
+                    test_status = data[x]['test_status']
+                    delivery_status = data[x]['delivery_status']
+                    test_status_display = test_status if test_status != 'NOT_FOUND' else 'N/A'
+                    if test_status == 'PASS' and delivery_status == 'ON_TIME':
+                        style = 'background-color: #27AE60; color: white;'
+                    elif test_status == 'PASS' and delivery_status == 'DELAYED':
+                        style = 'background-color: #FFB74D; color: white;'
+                    elif test_status == 'FAILED' and delivery_status == 'ON_TIME':
+                        style = 'background-color: #E74C3C; color: white;'
+                    elif test_status == 'FAILED' and delivery_status == 'DELAYED':
+                        style = 'background-color: #9B59B6; color: white;'
+                    elif test_status == 'ERROR':
+                        style = 'background-color: #555555; color: white;'
+                    elif test_status == 'NOT_FOUND' and delivery_status == 'DELAYED':
+                        style = 'background-color: sienna; color: white;'
+                    else:
+                        style = ''
+                    cell_content = test_status_display
+                    onclick_attr = ''
+                    if test_status in ['FAILED', 'ERROR']:
+                        issue_key = (git_username, repository_name, x)
+                        issue_text = issue_map.get(issue_key, '')
+                        if issue_text:
+                            json_text = json.dumps(issue_text)
+                            html_escaped = html_escape.escape(json_text, quote=True)
+                            onclick_attr = f" data-issue-text='{html_escaped}' onclick='showBalloon(this, JSON.parse(this.getAttribute(\"data-issue-text\")))'"  
+                    row2 += f'<td style="{style}"{onclick_attr}>{cell_content}</td>'
+                else:
+                    row2 += '<td></td>'
+            
+            row2 += '</tr>'
+            html += row1 + row2
         
         html += """
                 </tbody>
@@ -364,17 +463,29 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
                 const headers = table.querySelectorAll('th');
                 const tbody = table.querySelector('tbody');
                 const directions = Array.from(headers).map(() => 'asc');
+                const firstRowColCount = 5 + {len(v_versions)};
 
                 headers.forEach((header, index) => {{
                     header.addEventListener('click', () => {{
-                        const column = index;
-                        const isAsc = directions[column] === 'asc';
-                        directions[column] = isAsc ? 'desc' : 'asc';
+                        const isAsc = directions[index] === 'asc';
+                        directions[index] = isAsc ? 'desc' : 'asc';
 
-                        const rows = Array.from(tbody.querySelectorAll('tr'));
-                        rows.sort((a, b) => {{
-                            const aVal = a.children[column].textContent.trim();
-                            const bVal = b.children[column].textContent.trim();
+                        const allRows = Array.from(tbody.querySelectorAll('tr'));
+                        const pairs = [];
+                        for (let i = 0; i < allRows.length; i += 2) {{
+                            pairs.push([allRows[i], allRows[i + 1]]);
+                        }}
+
+                        pairs.sort((a, b) => {{
+                            let aVal, bVal;
+                            if (index < firstRowColCount) {{
+                                aVal = a[0].children[index].textContent.trim();
+                                bVal = b[0].children[index].textContent.trim();
+                            }} else {{
+                                const xIndex = index - firstRowColCount;
+                                aVal = a[1].children[xIndex].textContent.trim();
+                                bVal = b[1].children[xIndex].textContent.trim();
+                            }}
                             
                             if (!isNaN(aVal) && !isNaN(bVal)) {{
                                 return isAsc ? aVal - bVal : bVal - aVal;
@@ -383,7 +494,10 @@ async def get_repositories(semester_name: str, secret: str = Query(None)):
                             return isAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
                         }});
                         
-                        rows.forEach(row => tbody.appendChild(row));
+                        pairs.forEach(pair => {{
+                            tbody.appendChild(pair[0]);
+                            tbody.appendChild(pair[1]);
+                        }});
                     }});
                 }});
             </script>
@@ -1130,9 +1244,61 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
         "next_steps": "Token exchange and user session creation would happen here"
     }
 
+
+# ============================================================================
+# Security Management Endpoints
+# ============================================================================
+
+@app.get("/api/security/blocked-ips")
+async def get_blocked_ips(x_api_secret: Annotated[str, Header()] = None):
+    """Get list of currently blocked IPs (requires API secret)"""
+    if x_api_secret != API_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+    
+    blocked = ip_blocker.get_blocked_ips()
+    return {
+        "blocked_ips": blocked,
+        "count": len(blocked),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/security/ip-stats/{ip}")
+async def get_ip_statistics(ip: str, x_api_secret: Annotated[str, Header()] = None):
+    """Get statistics for a specific IP address"""
+    if x_api_secret != API_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+    
+    stats = ip_blocker.get_ip_stats(ip)
+    return {
+        "ip": ip,
+        "stats": stats,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/security/unblock-ip/{ip}")
+async def unblock_ip_endpoint(ip: str, x_api_secret: Annotated[str, Header()] = None):
+    """Manually unblock an IP address (requires API secret)"""
+    if x_api_secret != API_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+    
+    if not ip_blocker.is_ip_blocked(ip):
+        raise HTTPException(status_code=404, detail=f"IP {ip} is not currently blocked")
+    
+    ip_blocker.unblock_ip(ip)
+    logger.info(f"Admin manually unblocked IP: {ip}")
+    
+    return {
+        "message": f"IP {ip} has been unblocked",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=443, reload=False, log_level="info", access_log=True,
+    uvicorn_log_config = build_uvicorn_log_config()
+    uvicorn.run("main:app", host="0.0.0.0", port=443, reload=False, log_level="info", access_log=True, log_config=uvicorn_log_config,
     ssl_certfile="/etc/letsencrypt/live/compiler-tester.insper-comp.com.br/fullchain.pem",
     ssl_keyfile="/etc/letsencrypt/live/compiler-tester.insper-comp.com.br/privkey.pem"
     )
