@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException, Form, Depends, Header, Query
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import Response, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 import json
@@ -32,6 +32,14 @@ API_SECRET = os.getenv("API_SECRET", "your-default-secret-change-me")
 
 # Dashboard Secret for visualization access
 DASH_SECRET = os.getenv("DASH_SECRET", "your-default-dash-secret-change-me")
+
+# Whitelist of valid version -> PNG filename mappings for the /ds endpoint.
+# Only keys present here are servable; anything else is rejected as invalid.
+DS_VERSION_MAP = {
+    'v1.0': 'H02DS.png',
+    'v1.1': 'H03DS.png',
+    'v1.2': 'H04DS.png',
+}
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -639,6 +647,22 @@ async def svg(user, repo):
         }
     )
 
+@app.get('/ds')
+async def ds(version: str = Query(...)):
+    """
+    Serve a whitelisted PNG file from the static directory based on a version key.
+    Only versions present in DS_VERSION_MAP are servable; any other value is invalid.
+    """
+    filename = DS_VERSION_MAP.get(version)
+    if filename is None:
+        raise HTTPException(status_code=400, detail="invalid")
+
+    file_path = os.path.join("static", filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail="invalid")
+
+    return FileResponse(file_path, media_type="image/png")
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """
@@ -1031,6 +1055,7 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
                             <option value="Kotlin">Kotlin</option>
                             <option value="Go">Go</option>
                             <option value="C#">C#</option>
+                            <option value="F#">F#</option>
                             <option value="PHP">PHP</option>
                             <option value="Swift">Swift</option>
                             <option value="Rust">Rust</option>
@@ -1039,6 +1064,8 @@ async def setup_callback(installation_id: int = None, setup_action: str = None):
                             <option value="Dart">Dart</option>
                             <option value="Haskell">Haskell</option>
                             <option value="Java">Java</option>
+                            <option value="Clojure">Clojure</option>
+                            <option value="Scala">Scala</option>
                             <option value="Ruby">Ruby</option>
                             <option value="Nim">Nim</option>
                         </select>

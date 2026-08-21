@@ -9,6 +9,8 @@ db/backup/
 log/
 *.log
 mig-*
+security/blocked_ips.json
+security/ip_stats.json
 
 # C extensions
 *.so

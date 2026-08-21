@@ -37,13 +37,16 @@ async def run_docker_container_async(
         version_short = release[:4] if len(release) >= 4 else release
 
         javascript = ['typescript', 'cpp', 'lua', 'ruby', 'go', 'php', 'nim']
-        java = ['kotlin']
+        java = ['kotlin', 'clojure', 'scala']
+        cs = ['fs']
 
         container_language = repo_language.lower().replace("#","s").replace("++","pp")
         if container_language in javascript:
             container_language = 'javascript'
         elif container_language in java:
             container_language = 'java'
+        elif container_language in cs:
+            container_language = 'cs'
         
         # Build Docker command
         docker_cmd = [

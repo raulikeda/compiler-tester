@@ -82,6 +82,7 @@ async def process_setup_save(request: Request):
                 "Kotlin": "kotlinc main.kt -include-runtime -d app.jar && java -jar app.jar",
                 "C++": "g++ main.cpp -o main && ./main",
                 "C#": "dotnet run main.csproj",
+                "F#": "dotnet run --project main.fsproj",
                 "PHP": "php main.php",
                 "Rust": "cargo run --release --",
                 "Swift": "swift main.swift",
@@ -90,6 +91,8 @@ async def process_setup_save(request: Request):
                 "Dart": "dart --suppress-analytics run main.dart",
                 "Haskell": "runghc main.hs",
                 "Java": "java main.java",
+                "Clojure": "clojure main.clj",
+                "Scala": "scalac Main.scala && scala Main",
                 "Ruby": "ruby main.rb",
                 "Nim": "nim r --hints:off main.nim"
             }
