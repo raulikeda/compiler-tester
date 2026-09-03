@@ -3,6 +3,7 @@ from fastapi.responses import Response, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 import json
+import re
 import html as html_escape
 import logging
 from copy import deepcopy
@@ -41,7 +42,14 @@ DS_VERSION_MAP = {
     'v1.2': 'H04DS.png',
     'v2.0': 'H05DS.png',
     'v2.1': 'H06DS.png',
+    'v2.2': 'H07DS.png',
+    'v3.0': 'H08DS.png',
+    'v2.3': 'H09DS.png',
 }
+
+DS_DEFAULT_LANGUAGE = os.getenv("DS_DEFAULT_LANGUAGE", "go")
+DS_LANGUAGE_RE = re.compile(r'[a-z0-9_-]{1,16}')
+DS_STATIC_DIR = "static"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -649,18 +657,35 @@ async def svg(user, repo):
         }
     )
 
-@app.get('/ds')
-async def ds(version: str = Query(...)):
-    """
-    Serve a whitelisted PNG file from the static directory based on a version key.
-    Only versions present in DS_VERSION_MAP are servable; any other value is invalid.
+def ds_image_path(version: str, language: Optional[str]) -> Optional[str]:
+    """Resolve the DS PNG for a version/language, or None when not servable.
+
+    Looks up static/ds/<language>/<file> first, then the language-agnostic
+    static/<file>. `language` defaults to DS_DEFAULT_LANGUAGE and is validated
+    against DS_LANGUAGE_RE so it can never escape the static directory.
     """
     filename = DS_VERSION_MAP.get(version)
-    if filename is None:
-        raise HTTPException(status_code=400, detail="invalid")
+    lang = (language or DS_DEFAULT_LANGUAGE).lower()
+    if filename is None or not DS_LANGUAGE_RE.fullmatch(lang):
+        return None
+    for candidate in (
+        os.path.join(DS_STATIC_DIR, "ds", lang, filename),
+        os.path.join(DS_STATIC_DIR, filename),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
-    file_path = os.path.join("static", filename)
-    if not os.path.isfile(file_path):
+
+@app.get('/ds')
+async def ds(version: str = Query(...), language: Optional[str] = Query(None)):
+    """
+    Serve a whitelisted PNG file from the static directory based on a version key
+    and an optional language (defaults to DS_DEFAULT_LANGUAGE).
+    Only versions present in DS_VERSION_MAP are servable; any other value is invalid.
+    """
+    file_path = ds_image_path(version, language)
+    if file_path is None:
         raise HTTPException(status_code=400, detail="invalid")
 
     return FileResponse(file_path, media_type="image/png")
