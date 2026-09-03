@@ -39,6 +39,8 @@ DS_VERSION_MAP = {
     'v1.0': 'H02DS.png',
     'v1.1': 'H03DS.png',
     'v1.2': 'H04DS.png',
+    'v2.0': 'H05DS.png',
+    'v2.1': 'H06DS.png',
 }
 
 # Configure logging
