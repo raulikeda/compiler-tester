@@ -39,6 +39,8 @@ DS_VERSION_MAP = {
     'v1.0': 'H02DS.png',
     'v1.1': 'H03DS.png',
     'v1.2': 'H04DS.png',
+    'v2.0': 'H05DS.png',
+    'v2.1': 'H06DS.png',
 }
 
 # Configure logging
@@ -661,7 +663,7 @@ async def ds(version: str = Query(...)):
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=400, detail="invalid")
 
-    return FileResponse(file_path, media_type="image/png")
+    return FileResponse(file_path, media_type="image/png", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
