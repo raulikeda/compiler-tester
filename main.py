@@ -688,7 +688,7 @@ async def ds(version: str = Query(...), language: Optional[str] = Query(None)):
     if file_path is None:
         raise HTTPException(status_code=400, detail="invalid")
 
-    return FileResponse(file_path, media_type="image/png")
+    return FileResponse(file_path, media_type="image/png", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
