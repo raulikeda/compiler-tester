@@ -77,7 +77,7 @@ async def process_setup_save(request: Request):
                 "Python": "python3 main.py",
                 "JavaScript": "node main.js", 
                 "TypeScript": 'ts-node --skip-project --transpile-only --compiler-options \'{"module":"commonjs","moduleResolution":"node","ignoreDeprecations":"6.0"}\' main.ts',
-                "Go": "go run main.go",
+                "Go": "go run .",
                 "OCaml": "ocaml main.ml",
                 "Kotlin": "kotlinc main.kt -include-runtime -d app.jar && java -jar app.jar",
                 "C++": "g++ main.cpp -o main && ./main",
